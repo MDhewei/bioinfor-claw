@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Bioinfor-Claw logo" width="760">
+  <img src="Assets/logo.png" alt="Bioinfor-Claw logo" width="760">
 </p>
 
 <h1 align="center">Bioinfor-Claw</h1>
