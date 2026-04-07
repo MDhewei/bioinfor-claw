@@ -1,0 +1,8 @@
+query_gene: TP53
+resolved_symbol: TP53
+gene_id: ENSG00000141510
+mode: pan_cancer
+tsv_units: uqfpkm
+num_cohorts: 33
+top_cohort: UCEC
+top_cohort_median_expression: 30.2141

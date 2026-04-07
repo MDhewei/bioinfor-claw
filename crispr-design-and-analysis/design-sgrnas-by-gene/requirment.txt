@@ -1,0 +1,4 @@
+selenium
+openpyxl
+lxml
+html5lib

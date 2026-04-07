@@ -1,0 +1,20 @@
+Query gene: TP53
+Resolved gene symbol: TP53
+GENCODE ID: ENSG00000141510.16
+Expression category: universally-expressed
+Number of tissues: 54
+Max expression: 72.9493
+Median expression across tissues: 14.6837
+Tissues above threshold (1.0): 54/54 (100.00%)
+
+Top 10 tissues:
+1. Cells_EBV-transformed_lymphocytes: 72.9493
+2. Skin_Sun_Exposed_Lower_leg: 36.9609
+3. Skin_Not_Sun_Exposed_Suprapubic: 35.1604
+4. Cells_Cultured_fibroblasts: 32.8729
+5. Ovary: 32.4273
+6. Cervix_Endocervix: 29.5011
+7. Uterus: 29.4997
+8. Cervix_Ectocervix: 28.4806
+9. Fallopian_Tube: 28.1616
+10. Spleen: 26.5931

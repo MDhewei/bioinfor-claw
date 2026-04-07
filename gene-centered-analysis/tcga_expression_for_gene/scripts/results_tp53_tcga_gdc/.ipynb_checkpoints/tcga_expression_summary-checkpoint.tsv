@@ -1,0 +1,2 @@
+query_gene	resolved_symbol	gene_id	mode	tsv_units	num_cohorts	top_cohort	top_cohort_median_expression
+TP53	TP53	ENSG00000141510	pan_cancer	uqfpkm	33	UCEC	30.2141
