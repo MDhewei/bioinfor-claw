@@ -2,22 +2,6 @@
   <img src="Assets/logo.png" alt="Bioinfor-Claw logo" width="760">
 </p>
 
-<h1 align="center">Bioinfor-Claw</h1>
-
-<p align="center">
-  <strong>Your 24/7 Bioinformatics Copilot</strong>
-</p>
-
-<p align="center">
-  A modular bioinformatics skill repository for AI agents, scientific copilots, and workflow-driven research assistants.
-</p>
-
-<p align="center">
-  Bioinfor-Claw organizes reusable bioinformatics capabilities into structured skill sets for dataset access, gene-centered analysis, gene-list interpretation, CRISPR workflows, protein/structure reasoning, literature digestion, lab-oriented search, and scientific figure generation.
-</p>
-
----
-
 ## Tagline
 
 **Modular bioinformatics skills for AI-native scientific workflows.**
