@@ -1,0 +1,22 @@
+skill	skill_set	status	runtime	error
+atac-chipseq-downstream-analysis	multiomics-data-analysis	PASS	1.97	
+clustering-analysis	machine-learning-and-deep-learning	FAIL	1.32	h, bottom=y,   File "/usr/local/lib/python3.10/dist-packages/matplotlib/__init__.py", line 1524, in inner     return func(   File "/usr/local/lib/python3.10/dist-packages/matplotlib/axes/_axes.py", line 2510, in bar     facecolor, edgecolor = self._parse_bar_color_args(kwargs)   File "/usr/local/lib/python3.10/dist-packages/matplotlib/axes/_axes.py", line 2367, in _parse_bar_color_args     raise ValueError( ValueError: 'facecolor' or 'color' argument must be a valid color or sequence of colors. 
+cox-survival-analysis	gene-centered-analysis	PASS	2.87	
+crispr-screen-analysis	crispr-design-and-analysis	PASS	3.41	
+crispr-screen-qc	crispr-design-and-analysis	PASS	3.99	
+curate-gene-list-by-function	gene-list-analysis	SKIP	0.00	Requires API access to UniProt
+dimensionality-reduction	machine-learning-and-deep-learning	PASS	1.82	
+function-annotation-for-gene-list	gene-list-analysis	SKIP	0.00	Requires API access to MyGene.info and UniProt
+gene-list-overlap	gene-list-analysis	PASS	1.73	
+methylation-analysis	multiomics-data-analysis	PASS	1.22	
+omics-ml-classifier	machine-learning-and-deep-learning	FAIL	1.32	S --labels LABELS                               [--model {random_forest,logistic,svm,xgboost}]                               [--select-k SELECT_K] [--test-size TEST_SIZE]                               [--cv-folds CV_FOLDS]                               [--random-state RANDOM_STATE] [--prefix PREFIX]                               [--top-n-features TOP_N_FEATURES] [--umap]                               --outdir OUTDIR omics_ml_classifier.py: error: the following arguments are required: --features 
+plot-box-violin	bioinformatics-plot-generator	PASS	1.45	
+plot-heatmap	bioinformatics-plot-generator	PASS	1.72	
+plot-scatter-bar	bioinformatics-plot-generator	PASS	1.36	
+plot-survival	bioinformatics-plot-generator	FAIL	1.34	ions/festive-admiring-sagan/mnt/bioinfor-claw/bioinformatics-plot-generator/plot-survival/scripts/plot_survival.py", line 347, in main     times, surv, ci_lower, ci_upper, median = kaplan_meier_estimator(time[mask_g], event[mask_g])   File "/sessions/festive-admiring-sagan/mnt/bioinfor-claw/bioinformatics-plot-generator/plot-survival/scripts/plot_survival.py", line 113, in kaplan_meier_estimator     cumulative_variance += d_t / (n_at_risk * (n_at_risk - d_t)) ZeroDivisionError: division by zero 
+plot-volcano	bioinformatics-plot-generator	PASS	1.69	
+protein-structure-alignment	protein-structure-analysis	SKIP	0.00	Requires protein structure files
+protein-variant-mapper	protein-structure-analysis	SKIP	0.00	Requires protein structure files and variant data
+proteomics-analysis	multiomics-data-analysis	PASS	9.44	
+rnaseq-differential-expression	multiomics-data-analysis	FAIL	1.58	                                      [--min-samples MIN_SAMPLES]                                          [--fc-thresh FC_THRESH]                                          [--padj-thresh PADJ_THRESH]                                          [--prefix PREFIX]                                          [--top-n-heatmap TOP_N_HEATMAP]                                          --outdir OUTDIR rnaseq_differential_expression.py: error: the following arguments are required: --counts, --group-a, --group-b 
+single-cell-basic-analysis	multiomics-data-analysis	PASS	13.89	

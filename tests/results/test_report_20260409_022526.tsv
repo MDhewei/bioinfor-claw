@@ -1,0 +1,2 @@
+skill	skill_set	status	runtime	error
+cox-survival-analysis	gene-centered-analysis	FAIL	1.22	Traceback (most recent call last):   File "/sessions/festive-admiring-sagan/mnt/bioinfor-claw/gene-centered-analysis/cox-survival-analysis/scripts/cox_survival_analysis.py", line 12, in <module>     from scipy import stats ModuleNotFoundError: No module named 'scipy' 

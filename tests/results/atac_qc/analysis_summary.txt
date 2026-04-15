@@ -1,0 +1,7 @@
+ATAC/ChIP-seq Downstream Analysis Summary
+============================================================
+Input peak file: /sessions/festive-admiring-sagan/mnt/bioinfor-claw/tests/data/atac_peaks.narrowPeak
+Peaks loaded: 2000
+Mode: qc
+Genome: hg38
+Output directory: /sessions/festive-admiring-sagan/mnt/bioinfor-claw/tests/results/atac_qc

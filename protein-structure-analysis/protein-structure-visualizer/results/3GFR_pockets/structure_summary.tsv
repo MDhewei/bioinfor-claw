@@ -1,0 +1,2 @@
+structure_id	pdb_path	is_alphafold	chain_used	n_residues	modules	n_pockets_found	top_pocket_residues
+3GFR	results/3GFR_pockets/3GFR.pdb	False	A	673	pocket	10	12

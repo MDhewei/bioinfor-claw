@@ -360,6 +360,24 @@ Example:
 
 ---
 
+## Parameter decision guide
+
+| Signal in user request | Parameter to set |
+|---|---|
+| "top 10 labs" / concise shortlist | `--top-n 10` |
+| "broad landscape" / "many labs" | `--top-n 50` |
+| "only recent active labs" | `--years-back 3` |
+| "mature / established field" (e.g. CRISPR, genomics) | `--years-back 10` (catch founders who publish less now) |
+| "broad noisy keyword" (e.g. "bioinformatics") | `--max-authors-per-paper 15` (stricter, less noise) |
+| "collaboration-heavy field" (e.g. "CRISPR") | `--max-authors-per-paper 60` (looser) |
+| "more diversity across institutions" | `--max-per-institution 1` |
+| "depth within top institutions" | `--max-per-institution 3` |
+| "stricter PI filter" (senior PIs only) | `--min-last-author-count 5` |
+| "broader PI filter" (include rising PIs) | `--min-last-author-count 1 --min-first-last-author-count 2` |
+| "faster / fewer results needed" | `--max-works 100` |
+| "comprehensive / more recall" | `--max-works 500` |
+| Also need machine-readable output | add `--output-jsonl results/labs.jsonl` |
+
 ## Outputs
 
 ## Main output

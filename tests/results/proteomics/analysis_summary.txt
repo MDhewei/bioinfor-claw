@@ -1,0 +1,12 @@
+Proteomics Analysis Summary
+============================================================
+Input matrix: /sessions/festive-admiring-sagan/mnt/bioinfor-claw/tests/data/proteomics_intensities.tsv
+Proteins analyzed: 1136
+Samples: 12
+Quantification type: lfq
+Normalization: median
+Imputation: minprob
+Mode: all
+Reference group: control
+FDR cutoff: 0.05
+log2FC cutoff: 1.0

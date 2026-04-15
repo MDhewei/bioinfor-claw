@@ -1,0 +1,13 @@
+sample_id	group	batch
+Control_1	control	batch1
+Control_2	control	batch1
+Control_3	control	batch2
+Control_4	control	batch2
+Control_5	control	batch1
+Control_6	control	batch2
+Treatment_1	treatment	batch1
+Treatment_2	treatment	batch2
+Treatment_3	treatment	batch2
+Treatment_4	treatment	batch1
+Treatment_5	treatment	batch2
+Treatment_6	treatment	batch1

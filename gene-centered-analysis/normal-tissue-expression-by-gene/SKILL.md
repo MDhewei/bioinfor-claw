@@ -103,6 +103,17 @@ Output directory for all generated files.
 
 ---
 
+## Parameter decision guide
+
+| Signal in user request | Parameter to set |
+|---|---|
+| General tissue expression question | use defaults (`--top-n 10 --expr-detect-threshold 1.0`) |
+| "top 5 tissues" or quick summary | `--top-n 5` |
+| "broadly expressed" / "housekeeping gene" | use default threshold; classify result as `universally-expressed` |
+| "tissue-specific" question | check output `expression_category`; lower threshold (`--expr-detect-threshold 0.5`) if gene has moderate tissue-specific expression |
+| "lowly expressed" gene (e.g. receptor, non-abundant TF) | lower threshold: `--expr-detect-threshold 0.5` to catch subtle tissue bias |
+| Gene expected to be very highly expressed | threshold can be raised (`--expr-detect-threshold 5.0`) to focus on strong expression |
+
 ## Why this skill is gene-level instead of gene-list-level
 
 This skill is intentionally centered on **one gene at a time**, because the most common practical use case is:

@@ -217,6 +217,27 @@ Optional:
 - `--font-size <float>`
 - `--cmap <matplotlib_colormap>`
 
+## Parameter decision guide
+
+Choose library and parameters based on the biological question:
+
+| Signal in user request | Parameter to set |
+|---|---|
+| "GO enrichment" (unspecified sub-ontology) | `--library GO_BP` (most informative for functional biology) |
+| "biological process" | `--library GO_BP` |
+| "molecular function" | `--library GO_MF` |
+| "cellular component" / "where is the protein?" | `--library GO_CC` |
+| "all GO terms" | `--library GO` |
+| "KEGG pathway" | `--library KEGG` |
+| "Reactome pathway" | `--library REACTOME` |
+| "run everything" / no library specified | `--library ALL` |
+| "top 10 terms" | `--top-n 10` |
+| "top 20 terms" | `--top-n 20` |
+| "stricter threshold" / "FDR < 0.01" | `--sig-cutoff 0.01` |
+| "lenient / exploratory" | `--sig-cutoff 0.1` |
+| Mouse gene list | `--organism mouse` |
+| "larger figure" / "publication ready" | `--fig-width 10 --fig-height 8 --dpi 300` |
+
 ## Parameter interpretation
 
 Translate natural-language user requests into script arguments where possible.

@@ -1,0 +1,4 @@
+group	n	n_events	median_survival	ci_lower	ci_upper	pvalue
+GroupA	60	27	471	N/A	N/A	3.5628944239363136e-11
+GroupB	60	31	353	N/A	N/A	3.5628944239363136e-11
+GroupC	60	42	172	N/A	N/A	3.5628944239363136e-11

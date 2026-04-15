@@ -1,0 +1,2 @@
+prefix	model	n_samples	n_features_input	n_features_used	n_classes	classes	train_samples	test_samples	cv_folds	cv_accuracy_mean	cv_accuracy_std	cv_roc_auc_mean	cv_roc_auc_std	test_accuracy	test_roc_auc	top_feature_1	top_feature_2	top_feature_3
+logistic_classifier	logistic	200	200	200	2	Class_A;Class_B	160	40	5	1.0	0.0	1.0	0.0	1.0	1.0	Feature_014	Feature_007	Feature_005

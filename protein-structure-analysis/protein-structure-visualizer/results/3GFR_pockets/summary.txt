@@ -1,0 +1,8 @@
+structure_id: 3GFR
+pdb_path: results/3GFR_pockets/3GFR.pdb
+is_alphafold: False
+chain_used: A
+n_residues: 673
+modules: pocket
+n_pockets_found: 10
+top_pocket_residues: 12

@@ -102,6 +102,24 @@ Use the following argument patterns as needed:
 - `--drop-duplicates`
 - `--summary <summary_tsv>`
 
+## Parameter decision guide
+
+Choose parameters based on what the user needs:
+
+| Signal in user request | Parameter to set |
+|---|---|
+| Single gene (e.g. "design guides for TP53") | `--gene TP53` |
+| Multiple genes (e.g. "for TP53, EGFR, MYC") | `--gene TP53,EGFR,MYC` |
+| Gene list from a file | `--gene-file genes.txt` |
+| "mouse" or "Trp53" (mouse gene symbol) | `--genome mouse` |
+| "monkey" or primate study | `--genome monkey` |
+| "top 5 guides" | `--top-n-per-gene 5` |
+| "top 3 guides" (for a quick screen) | `--top-n-per-gene 3` |
+| "all guides" (no limit) | omit `--top-n-per-gene` |
+| "remove duplicates" or guides shared across genes | `--drop-duplicates` |
+| "save a summary" or downstream reporting needed | `--summary results/summary.tsv` |
+| "update / refresh" the reference | `--refresh-cache` |
+
 ## Defaults
 Unless the user specifies otherwise:
 - use `human` as the default genome

@@ -262,6 +262,21 @@ Optional:
 - `--organism <human|mouse|hs|hsapiens|homo sapiens|mm|mus musculus>`
 - `--output-format <tsv|csv>`
 
+## Parameter decision guide
+
+| Signal in user request | Parameter to set |
+|---|---|
+| Human gene list (default) | `--organism human` |
+| Mouse gene list | `--organism mouse` |
+| "output CSV instead of TSV" | `--output-format csv` |
+| "just give me IDs" (minimal output) | default schema already includes identifiers; no extra flag needed |
+| "include domain information" | default schema already includes domain fields; verify they are populated |
+| "disease associations" | default schema includes `disease_association`; no extra flag needed |
+| Gene symbols from a file | `--input genes.txt` |
+| Inline gene list | write to a temp file first, then pass `--input` |
+| "map to UniProt" | automatically done; check `uniprot_accession` column |
+| "map to Ensembl" | automatically done; check `ensembl_gene_id` column |
+
 ## Defaults
 
 Unless the user specifies otherwise:

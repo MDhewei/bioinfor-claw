@@ -1,200 +1,217 @@
 ---
-name: bioinformatics_plot_generator
-description: Use when the user wants a publication-ready bioinformatics plot from tabular data or a numeric matrix, including volcano plots, heatmaps, boxplots, violin plots, scatter plots, and correlation plots.
+name: bioinformatics-plot-generator
+description: Route to the correct publication-quality plot sub-skill for volcano plots, heatmaps, box/violin plots, scatter plots, bar charts, MA plots, correlation matrices, and bubble charts from bioinformatics data.
 ---
 
-## Dependencies
-Install with:
-`pip install -r requirements.txt`
+# Bioinformatics Plot Generator
 
 ## Purpose
-Generate publication-ready bioinformatics plots from tables or matrices using a lightweight, script-based workflow.
+
+This is the **router skill** for all bioinformatics plotting tasks. It selects and delegates to the appropriate sub-skill based on the type of plot requested. Each sub-skill is a fully self-contained, publication-quality plotting tool with 40–70 user-configurable parameters.
+
+## Sub-skills
+
+| Sub-skill | Location | Plot types |
+|---|---|---|
+| `plot-volcano` | `plot-volcano/` | Volcano plots (DE/CRISPR/GWAS results) |
+| `plot-heatmap` | `plot-heatmap/` | Heatmaps with clustering and annotations |
+| `plot-box-violin` | `plot-box-violin/` | Box plots, violin plots, raincloud plots |
+| `plot-scatter-bar` | `plot-scatter-bar/` | Scatter, bar, MA, correlation matrix, bubble |
+
+## Routing guide
+
+Use this table to pick the correct sub-skill:
+
+| User request signal | Sub-skill to use |
+|---|---|
+| "volcano plot", "differential expression", "CRISPR screen hits", "-log10 p-value vs fold change" | `plot-volcano` |
+| "heatmap", "expression matrix", "gene expression heatmap", "z-score heatmap", "clustered heatmap" | `plot-heatmap` |
+| "boxplot", "violin plot", "box and whisker", "raincloud", "distribution comparison", "group comparison" | `plot-box-violin` |
+| "scatter plot", "correlation plot", "bar chart", "bar graph", "MA plot", "correlation matrix", "bubble chart", "bubble plot" | `plot-scatter-bar` |
 
 ## Use when
-- the user wants a supported plot from a result table or numeric matrix
-- the user wants a figure suitable for publication or presentation
-- the required columns are present or can be identified reliably
-- the task is a routine plotting task rather than a highly specialized visualization
+
+- The user wants any of the supported plot types from tabular data or a numeric matrix
+- The user wants a figure suitable for publication (300 DPI PNG + SVG)
+- The user has a result table (differential expression, CRISPR screen, proteomics, etc.) and wants to visualize it
 
 ## Do not use when
-- the user wants genome browser tracks or signal plots from BAM, bigWig, or BEDGraph files
-- the user wants protein 3D structure visualization
-- the user wants a complex multi-panel layout assembled across multiple figures
-- the input does not contain the columns needed for the requested plot
-- the task requires a specialized plotting ecosystem not supported by this script
 
-## Supported plot types
-- volcano
-- heatmap
-- boxplot
-- violin
-- scatter
-- correlation
+- The user wants genome browser tracks or signal plots from BAM/bigWig/BEDGraph files
+- The user wants protein 3D structure visualization
+- The user wants single-cell UMAP/tSNE trajectory plots requiring Scanpy/Seurat
+- The user wants interactive plots (use a Plotly skill instead)
 
-## Expected inputs
-One of the following:
-- a table with effect-size and significance columns for a volcano plot
-- a numeric matrix for a heatmap
-- a table with a numeric value column and a grouping column for a boxplot or violin plot
-- a table with two numeric columns for a scatter or correlation plot
+---
 
-## Expected outputs
-- a publication-ready plot file, typically PNG
-- a brief summary of the plot type, columns used, and key settings applied
+## Sub-skill details
 
-## Procedure
-1. Determine the requested plot type from the user’s instruction. If the plot type is not explicitly provided, infer the most likely supported type from the available columns.
-2. Validate that the required columns exist and contain usable numeric values where needed.
-3. Clean missing, invalid, or non-numeric values relevant to the selected plot.
-4. Run `scripts/plot_generator.py` with the appropriate arguments for the selected plot type.
-5. Save the output plot.
-6. Return the output path and summarize the settings used.
+### plot-volcano
 
-## Plot-specific capabilities
+**Use for:** Volcano plots from differential expression, CRISPR screens, GWAS, proteomics, or any table with a fold-change column and a p-value column.
 
-### Volcano
-- significance and fold-change threshold lines
-- highlight selected upregulated or downregulated features
-- label highlighted features
-- label top-ranked hits
-- separate top up and top down labeling
-- optional automatic label adjustment when `adjustText` is available
-- configurable maximum number of labels
-- configurable axis limits
-- configurable point size, transparency, and annotation size
+**Key features:**
+- Symmetric or asymmetric fold-change cutoffs (`--fc-cutoff`, `--fc-cutoff-neg`)
+- Color by discrete group (up/down/ns) or by continuous column with a colormap
+- Three highlight layers: up-regulated, down-regulated, other (custom gene lists or files)
+- Top-N auto-annotation with `adjustText` label collision avoidance
+- Quadrant counts displayed on plot
+- 300 DPI PNG + SVG dual output
+- Annotated TSV output table with assigned group per feature
 
-### Heatmap
-- numeric matrix plotting
-- optional row scaling by z-score
-- configurable colormap
-- configurable color scale limits
-- automatic figure sizing when dimensions are not provided
+**Script:** `plot-volcano/scripts/plot_volcano.py`
 
-### Boxplot and violin
-- grouped comparison from value and group columns
-- optional overlay of individual points
-- optional two-group statistical testing
-- supported tests:
-  - Mann–Whitney U
-  - Welch t-test
-- p-value and significance annotation for two-group comparisons
-- configurable group order
+**Minimal run:**
+```bash
+python plot-volcano/scripts/plot_volcano.py \
+  --input results.tsv \
+  --feature-col gene \
+  --x-col log2FoldChange \
+  --p-col padj \
+  --output volcano.png
+```
 
-### Scatter and correlation
-- scatter plot from two numeric columns
-- Pearson or Spearman correlation
-- p-value annotation
-- sample size annotation
-- optional regression line
+---
 
-## Key execution patterns
+### plot-heatmap
 
-### Volcano
-`python scripts/plot_generator.py --input <input_file> --plot-type volcano --feature-col <feature_col> --x-col <effect_col> --p-col <pvalue_col> --output <output_png>`
+**Use for:** Heatmaps from any numeric matrix — gene expression, protein abundance, methylation, pathway scores, etc.
 
-Common optional arguments:
-- `--fc-cutoff <float>`
-- `--p-cutoff <float>`
-- `--annotate-top-n <int>`
-- `--top-up-n <int>`
-- `--top-down-n <int>`
-- `--highlight-up <comma_list_or_file>`
-- `--highlight-down <comma_list_or_file>`
-- `--label-mode <none|top|highlight|top_and_highlight>`
-- `--max-labels <int>`
-- `--adjust-labels`
-- `--annotation-arrow`
-- `--xlim <min,max>`
-- `--ylim <min,max>`
+**Key features:**
+- Hierarchical clustering with dendrogram display (scipy linkage methods: ward, complete, average, single)
+- Row and column annotation bars from separate TSV files with custom color palettes
+- Variance-based row filtering (keep top N most variable rows)
+- Z-score normalization per row or column with optional clipping
+- Cell value annotation (show numbers inside cells)
+- Auto figure sizing based on matrix dimensions
+- Flexible colormap, vmin/vmax, missing value handling
 
-### Heatmap
-`python scripts/plot_generator.py --input <input_file> --plot-type heatmap --index-col <rowname_col> --output <output_png>`
+**Script:** `plot-heatmap/scripts/plot_heatmap.py`
 
-Common optional arguments:
-- `--scale-rows`
-- `--cmap <colormap>`
-- `--vmin <float>`
-- `--vmax <float>`
+**Minimal run:**
+```bash
+python plot-heatmap/scripts/plot_heatmap.py \
+  --input expression_matrix.tsv \
+  --index-col gene \
+  --output heatmap.png
+```
 
-### Boxplot
-`python scripts/plot_generator.py --input <input_file> --plot-type boxplot --value-col <value_col> --group-col <group_col> --output <output_png>`
+---
 
-Common optional arguments:
-- `--group-order <comma_list>`
-- `--show-points`
-- `--test-method <mannwhitney|ttest>`
+### plot-box-violin
 
-### Violin
-`python scripts/plot_generator.py --input <input_file> --plot-type violin --value-col <value_col> --group-col <group_col> --output <output_png>`
+**Use for:** Comparing distributions across groups — box plots, violin plots, combined box+violin, or raincloud plots.
 
-Common optional arguments:
-- `--group-order <comma_list>`
-- `--show-points`
-- `--test-method <mannwhitney|ttest>`
+**Key features:**
+- Four plot types: `box`, `violin`, `both` (violin with inner box), `raincloud`
+- Jittered individual points with customizable size and alpha
+- Multi-group statistical testing: auto, all_pairs, vs_first, vs_last
+- Tests: Mann–Whitney U, Welch t-test, Dunn's test (pure numpy, no scipy dependency)
+- Multiple testing correction: Bonferroni or Benjamini–Hochberg FDR
+- Significance bracket annotations drawn above each pair
+- Horizontal orientation option
+- Custom group ordering and color palettes
 
-### Scatter or correlation
-`python scripts/plot_generator.py --input <input_file> --plot-type scatter --x-col <x_col> --y-col <y_col> --output <output_png>`
+**Script:** `plot-box-violin/scripts/plot_box_violin.py`
 
-Common optional arguments:
-- `--corr-method <pearson|spearman>`
-- `--no-regression`
+**Minimal run:**
+```bash
+python plot-box-violin/scripts/plot_box_violin.py \
+  --input data.tsv \
+  --value-col expression \
+  --group-col condition \
+  --plot-type violin \
+  --output violin.png
+```
 
-## Style controls
-The script supports customizable figure styling for publication use. These options can be used across plot types when appropriate:
+---
 
-- `--font-family`
-- `--base-fontsize`
-- `--title-size`
-- `--axis-label-size`
-- `--tick-size`
-- `--legend-size`
-- `--annotation-size`
-- `--fig-width`
-- `--fig-height`
-- `--dpi`
-- `--point-size`
-- `--alpha`
+### plot-scatter-bar
 
-## Conventions
-- Prefer explicit user-provided column names when available.
-- Prefer absolute file paths if the working directory is uncertain.
-- Save plots as PNG unless another format is explicitly requested and supported.
-- Keep labeling selective and readable rather than attempting to annotate too many features.
-- Use `--adjust-labels` for crowded volcano plots when `adjustText` is installed.
+**Use for:** Five plot types in one script — scatter plots, bar charts, MA plots, correlation matrices, and bubble charts.
 
-## Dependencies
-Expected Python packages:
-- pandas
-- numpy
-- matplotlib
-- scipy
+**Key features:**
 
-Optional but recommended:
-- adjustText
+**Scatter:**
+- Linear regression line with 95% CI band (bootstrap)
+- Pearson/Spearman correlation annotation
+- Optional marginal histograms
+- Highlight gene list with separate color/label
 
-## Failure modes
-- required columns are missing
-- numeric columns contain invalid values
-- too many missing values remain after cleaning
-- matrix input contains no usable numeric columns
-- too many requested labels cause unreadable output
-- the Python environment is missing required packages
-- `adjustText` is requested implicitly through label adjustment expectations but is not installed
+**Bar:**
+- Grouped or stacked bar charts
+- Error bars: SEM, SD, or 95% CI
+- Value labels on bars
+- Horizontal orientation
 
-## Interaction model
-Users may specify plotting preferences in natural language. When the request is clear and supported, translate those preferences into script arguments.
+**MA (ratio vs. mean):**
+- M-A plot (log-ratio vs. average intensity)
+- LOESS smoothing line (tricubic kernel, pure numpy)
+- Significant feature highlighting
 
-Examples of supported user preferences include:
-- font family and font sizes
-- figure width, height, and dpi
-- plot title
-- significance thresholds
-- highlighted features
-- label strategy
-- group order
-- statistical test choice
-- correlation method
-- whether to show regression lines or sample points
+**Correlation matrix:**
+- Pairwise correlation heatmap (Pearson or Spearman)
+- Hierarchical clustering of samples
+- Correlation values displayed in cells
 
-If the user’s request is supported by the plotting script, apply it directly.
-If the request is unsupported, use the closest sensible default and briefly state the limitation.
+**Bubble:**
+- Bubble chart with x/y/size/color columns
+- Log-scale size normalization
+- Separate size and color legends
+
+**Script:** `plot-scatter-bar/scripts/plot_scatter_bar.py`
+
+**Minimal runs:**
+```bash
+# Scatter
+python plot-scatter-bar/scripts/plot_scatter_bar.py \
+  --input data.tsv --plot-type scatter \
+  --x-col sample1 --y-col sample2 --output scatter.png
+
+# Bar chart
+python plot-scatter-bar/scripts/plot_scatter_bar.py \
+  --input counts.tsv --plot-type bar \
+  --value-col count --group-col condition --output bar.png
+
+# MA plot
+python plot-scatter-bar/scripts/plot_scatter_bar.py \
+  --input de_results.tsv --plot-type ma \
+  --mean-col baseMean --ratio-col log2FC --output ma.png
+
+# Correlation matrix
+python plot-scatter-bar/scripts/plot_scatter_bar.py \
+  --input expr_matrix.tsv --plot-type corrmat \
+  --index-col gene --output corrmat.png
+
+# Bubble chart
+python plot-scatter-bar/scripts/plot_scatter_bar.py \
+  --input enrichment.tsv --plot-type bubble \
+  --x-col NES --y-col pathway \
+  --size-col gene_count --color-col padj --output bubble.png
+```
+
+---
+
+## Common style parameters (all sub-skills)
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--fig-width` | auto | Figure width in inches |
+| `--fig-height` | auto | Figure height in inches |
+| `--dpi` | 300 | Output resolution |
+| `--font-family` | `sans-serif` | Font family |
+| `--base-fontsize` | 11 | Base font size (pt) |
+| `--title` | — | Plot title |
+| `--xlabel` | auto | X-axis label |
+| `--ylabel` | auto | Y-axis label |
+| `--output` | required | Output PNG path |
+| `--output-svg` | off | Also save SVG alongside PNG |
+
+## Procedure for routing
+
+1. Identify the plot type from the user's request.
+2. Read the corresponding sub-skill SKILL.md (e.g., `plot-volcano/SKILL.md`) for the full parameter reference.
+3. Identify required input columns from the user's data or description.
+4. Construct the command with appropriate parameters from the parameter decision guide in the sub-skill SKILL.md.
+5. Run the script and return the output path.
+6. If the user requests customization beyond the defaults, consult the sub-skill's parameter decision guide and full argument list.

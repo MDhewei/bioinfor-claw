@@ -1,0 +1,62 @@
+QC Summary
+==================================================
+
+Sample: Control_1
+  n_proteins: 1137
+  mean_intensity: 25.268540902157252
+  cv: 22.724025774538568
+
+Sample: Control_2
+  n_proteins: 1137
+  mean_intensity: 24.936230290454507
+  cv: 22.780234928545354
+
+Sample: Control_3
+  n_proteins: 1140
+  mean_intensity: 25.084001081060673
+  cv: 23.012414671668655
+
+Sample: Control_4
+  n_proteins: 1141
+  mean_intensity: 24.817496023506052
+  cv: 23.266429986387553
+
+Sample: Control_5
+  n_proteins: 1135
+  mean_intensity: 25.1894071996703
+  cv: 23.28188905620017
+
+Sample: Control_6
+  n_proteins: 1141
+  mean_intensity: 24.970405824123787
+  cv: 22.789297941731654
+
+Sample: Treatment_1
+  n_proteins: 1138
+  mean_intensity: 25.23643847476712
+  cv: 23.17156557010632
+
+Sample: Treatment_2
+  n_proteins: 1146
+  mean_intensity: 25.103097527990958
+  cv: 23.107895671526578
+
+Sample: Treatment_3
+  n_proteins: 1143
+  mean_intensity: 25.01570151763538
+  cv: 23.788863359911236
+
+Sample: Treatment_4
+  n_proteins: 1141
+  mean_intensity: 24.842102882485023
+  cv: 23.125011503539483
+
+Sample: Treatment_5
+  n_proteins: 1139
+  mean_intensity: 25.198733788344175
+  cv: 23.26786625520831
+
+Sample: Treatment_6
+  n_proteins: 1137
+  mean_intensity: 24.973018762177634
+  cv: 23.650488268604082

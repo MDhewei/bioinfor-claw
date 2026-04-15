@@ -1,0 +1,5 @@
+covariate	correlation	pvalue	ph_violated
+age	-0.09805097451274362	1.0	False
+stage_2	-0.22137615402824903	1.0	False
+stage_3	-0.10027617770062337	1.0	False
+stage_4	0.3495226071174939	1.0	False

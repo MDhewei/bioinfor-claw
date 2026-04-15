@@ -1,0 +1,10 @@
+Peak QC Metrics
+==================================================
+total_peaks: 2000
+median_peak_width: 1131
+mean_peak_width: 1128
+min_peak_width: 200
+max_peak_width: 2000
+mean_score: 558.7515
+median_score: 567.0
+std_score: 259.9937282854146

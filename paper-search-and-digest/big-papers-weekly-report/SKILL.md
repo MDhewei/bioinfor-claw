@@ -430,6 +430,22 @@ Avoid:
 - overclaiming impact
 - implying that the heuristic score is a formal scientific metric
 
+## Parameter decision guide
+
+| Signal in user request | Parameter to set |
+|---|---|
+| "past week" (default) | use defaults (last 7 days) |
+| "past two weeks" | `--date-from YYYY-MM-DD` (14 days ago) `--date-to YYYY-MM-DD` (today) |
+| "top 5 papers" (brief report) | `--top-n 5` |
+| "top 20 papers" (comprehensive) | `--top-n 20` |
+| "focus on single-cell / spatial / protein structure" | `--interest-keywords "single-cell,spatial omics"` |
+| "only Nature Methods and Nature Biotechnology" | `--journals "Nature Methods,Nature Biotechnology" --replace-default-journals` |
+| "add Cell Genomics to the list" | `--journals "Cell Genomics"` (appended to defaults) |
+| "fast mode / no PubMed" | `--skip-pubmed` |
+| "richer abstracts for top papers" | `--pubmed-top-k 20` |
+| "strongly prioritize user topic" | `--interest-weight 5.0` |
+| "balance field relevance and user interest equally" | `--generic-bioinfo-weight 1.0 --interest-weight 1.0` |
+
 ## Interaction model
 
 Translate natural-language user requests into supported arguments where possible.

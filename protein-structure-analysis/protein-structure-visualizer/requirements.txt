@@ -1,0 +1,10 @@
+biopython>=1.81
+matplotlib>=3.7.0
+networkx>=3.0
+numpy>=1.24.0
+pandas>=2.0.0
+py3Dmol>=2.0.0
+requests>=2.28.0
+# Optional: dssp (mkdssp binary) — install via conda or system package manager
+# conda install -c salilab dssp
+# apt install dssp

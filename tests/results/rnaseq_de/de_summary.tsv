@@ -1,0 +1,2 @@
+prefix	group_a	group_b	n_samples_a	n_samples_b	method	genes_tested	fc_threshold	padj_threshold	n_significant	n_upregulated	n_downregulated
+treatment_vs_control	control	treatment	6	6	deseq2	500	1.0	0.05	40	38	2

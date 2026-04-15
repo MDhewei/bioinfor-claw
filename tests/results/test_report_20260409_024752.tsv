@@ -1,0 +1,22 @@
+skill	skill_set	status	runtime	error
+atac-chipseq-downstream-analysis	multiomics-data-analysis	PASS	2.02	
+clustering-analysis	machine-learning-and-deep-learning	PASS	2.46	
+cox-survival-analysis	gene-centered-analysis	PASS	2.90	
+crispr-screen-analysis	crispr-design-and-analysis	PASS	3.31	
+crispr-screen-qc	crispr-design-and-analysis	PASS	3.85	
+curate-gene-list-by-function	gene-list-analysis	SKIP	0.00	Requires API access to UniProt
+dimensionality-reduction	machine-learning-and-deep-learning	PASS	1.78	
+function-annotation-for-gene-list	gene-list-analysis	SKIP	0.00	Requires API access to MyGene.info and UniProt
+gene-list-overlap	gene-list-analysis	PASS	1.67	
+methylation-analysis	multiomics-data-analysis	PASS	1.19	
+omics-ml-classifier	machine-learning-and-deep-learning	PASS	2.34	
+plot-box-violin	bioinformatics-plot-generator	PASS	1.39	
+plot-heatmap	bioinformatics-plot-generator	PASS	1.67	
+plot-scatter-bar	bioinformatics-plot-generator	PASS	1.35	
+plot-survival	bioinformatics-plot-generator	PASS	1.59	
+plot-volcano	bioinformatics-plot-generator	PASS	1.43	
+protein-structure-alignment	protein-structure-analysis	SKIP	0.00	Requires protein structure files
+protein-variant-mapper	protein-structure-analysis	SKIP	0.00	Requires protein structure files and variant data
+proteomics-analysis	multiomics-data-analysis	PASS	9.68	
+rnaseq-differential-expression	multiomics-data-analysis	PASS	2.92	
+single-cell-basic-analysis	multiomics-data-analysis	PASS	14.31	

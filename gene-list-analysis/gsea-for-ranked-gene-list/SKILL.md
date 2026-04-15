@@ -121,6 +121,26 @@ Common optional arguments:
 - `--font-family <string>`
 - `--font-size <float>`
 
+## Parameter decision guide
+
+| Signal in user request | Parameter to set |
+|---|---|
+| "Hallmark pathways" (default for cancer biology) | `--library HALLMARK` |
+| "KEGG pathways" | `--library KEGG` |
+| "Reactome" | `--library REACTOME` |
+| "GO biological process" | `--library GO_BP` |
+| Ranked by log2FC from DE results | `--gene-col gene --score-col log2FC` |
+| Ranked by Wald statistic / t-statistic | `--gene-col gene --score-col stat` |
+| "top 5 pathways" | `--top-n 5` |
+| "top 10 pathways" (default) | `--top-n 10` |
+| "FDR < 0.1" (standard for GSEA) | `--fdr-cutoff 0.1` |
+| "FDR < 0.25" (lenient, exploratory) | `--fdr-cutoff 0.25` |
+| Mouse gene list | `--organism mouse` |
+| "more permutations / reliable p-values" | `--permutation-num 1000` (slower but more accurate) |
+| "fast / exploratory" | `--permutation-num 100` |
+| Small gene sets (< 15 genes) | lower `--min-size 10` |
+| Filter out very large gene sets | `--max-size 300` |
+
 ## Interaction model
 
 Users may express requests in natural language. Translate supported requests into script arguments when possible.

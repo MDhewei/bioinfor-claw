@@ -1,0 +1,2 @@
+# All dependencies are Python standard library only (urllib, xml, csv, json)
+# No third-party packages required

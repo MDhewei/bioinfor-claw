@@ -1,0 +1,6 @@
+sample	total_reads	num_guides	represented_guides	representation_fraction	median_reads	mean_reads	gini_index	missing_guides	missing_fraction	control_mean	targeting_mean
+Plasmid_lib	1977126	4046	4046	1.0	486.0	488.7	0.063	0	0.0	0.0	488.7
+Control_1	1954895	4046	4040	0.999	478.0	483.6	0.185	0	0.0	0.0	483.6
+Control_2	1986638	4046	4044	1.0	483.0	491.1	0.177	0	0.0	0.0	491.1
+Treatment_1	2050343	4046	4042	0.999	485.0	506.9	0.23	0	0.0	0.0	506.9
+Treatment_2	2027197	4046	4041	0.999	480.0	501.2	0.232	0	0.0	0.0	501.2

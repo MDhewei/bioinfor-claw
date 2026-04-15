@@ -1,0 +1,217 @@
+================================================================================
+BIOINFORMATICS SKILLS TEST DATA MANIFEST
+Generated: 2026-04-09
+Total Files: 31
+Total Size: 4.1 MB
+================================================================================
+
+DATASET CATEGORIES AND FILES:
+
+1. RNA-seq Analysis (2 files)
+   ├─ rnaseq_counts.tsv (500 genes × 12 samples)
+   │  └─ Contains NegBinomial counts with differential expression signal
+   └─ rnaseq_metadata.tsv (12 samples)
+      └─ Groups: control (6), treatment (6) with batch info
+
+2. ATAC-seq / ChIP-seq Peaks (2 files)
+   ├─ atac_peaks.narrowPeak (2000 peaks)
+   │  └─ Standard narrowPeak format with realistic coverage metrics
+   └─ atac_peaks2.narrowPeak (1800 peaks)
+      └─ ~60% overlap with atac_peaks.narrowPeak for differential analysis
+
+3. DNA Methylation (2 files)
+   ├─ methylation_beta.tsv (3000 CpGs × 12 samples)
+   │  └─ Beta values (0-1) with first 200 CpGs differentially methylated
+   └─ methylation_metadata.tsv (12 samples)
+      └─ Same structure as RNA-seq metadata
+
+4. Proteomics (2 files)
+   ├─ proteomics_intensities.tsv (1500 proteins × 12 samples)
+   │  └─ Log2 intensities with 20% missing values, realistic missingness
+   └─ proteomics_metadata.tsv (12 samples)
+      └─ Same structure as RNA-seq metadata
+
+5. Single-cell RNA-seq (2 files)
+   ├─ scrna_counts.tsv (500 cells × 1000 genes)
+   │  └─ UMI counts, sparse matrix format with 3 distinct cell types
+   └─ scrna_metadata.tsv (500 cells)
+      └─ Cell type assignments and batch information
+
+6. CRISPR Screen (1 file)
+   └─ crispr_counts.tsv (4046 sgRNAs × 5 samples)
+      └─ Plasmid library + controls + treatments with depletion/enrichment signals
+
+7. Gene Lists (4 files)
+   ├─ gene_list_A.txt (150 genes)
+   │  └─ Cancer-related genes
+   ├─ gene_list_B.txt (120 genes)
+   │  └─ ~70% overlap with A
+   ├─ gene_list_C.txt (80 genes)
+   │  └─ ~30% overlap with A, ~20% with B
+   └─ ranked_gene_list.tsv (500 genes)
+      └─ Ranked by log2FC with p-values for gene set analysis
+
+8. Survival / Clinical (1 file)
+   └─ survival_data.tsv (200 patients × 8 columns)
+      └─ Time-to-event data with covariates (age, stage, grade, treatment)
+
+9. Machine Learning Classification (2 files)
+   ├─ ml_features.tsv (200 samples × 200 features)
+   │  └─ First 20 features discriminative, rest random
+   └─ ml_labels.tsv (200 samples)
+      └─ Binary classification labels (Class_A/Class_B)
+
+10. Expression Matrix / Clustering (2 files)
+    ├─ expression_matrix.tsv (50 samples × 500 genes)
+    │  └─ 3 clusters with distinct marker genes
+    └─ sample_metadata.tsv (50 samples)
+       └─ Tissue type, batch, and treatment assignments
+
+11. Plot Test Data (6 files)
+    ├─ de_results.tsv (1000 genes)
+    │  └─ Volcano plot data with log2FC, p-values, baseMean
+    ├─ heatmap_matrix.tsv (80 genes × 24 samples)
+    │  └─ 3 sample groups with distinct expression patterns
+    ├─ boxviolin_data.tsv (120 observations)
+    │  └─ 4 groups for box/violin plots
+    ├─ scatter_data.tsv (100 points)
+    │  └─ Correlated x/y values with grouping
+    ├─ bar_data.tsv (150 observations)
+    │  └─ Gene expression by condition/replicate
+    └─ survival_plot.tsv (180 patients)
+       └─ 3 survival groups with different hazards
+
+12. API Skills Parameters (4 files)
+    ├─ api_test_genes.txt (10 genes)
+    │  └─ Common cancer genes for protein/sgRNA design
+    ├─ api_test_gene_list.txt (50 genes)
+    │  └─ Larger gene list for batch API testing
+    ├─ crispr_library_genes.txt (20 genes)
+    │  └─ Genes for library design testing
+    └─ pubmed_test_query.txt (1 query)
+       └─ Example PubMed search query
+
+13. Documentation (1 file)
+    └─ README.md
+       └─ Comprehensive dataset documentation
+
+================================================================================
+KEY FEATURES OF SYNTHETIC DATA:
+
+RNA-seq:
+  - 500 genes with TP53, BRCA1, EGFR, MYC, KRAS as first 5
+  - First 50 genes upregulated 2-4x in treatment group
+  - Samples: Control_1-6, Treatment_1-6 with batch effects
+
+ATAC-seq:
+  - 2000 peaks across chr1-chr22 and chrX
+  - Peak widths 200-2000bp with realistic signal values
+  - 1800 peaks in second file with ~60% overlap
+
+Methylation:
+  - 3000 CpGs with cg00000001..cg00003000 naming
+  - Beta distribution values
+  - First 200 CpGs shifted +0.2-0.4 in treatment
+
+Proteomics:
+  - 1500 proteins with realistic log2 intensity ranges
+  - ~20% missing values per sample
+  - ~5% entirely missing rows (low-abundance)
+
+Single-cell:
+  - 500 cells × 1000 genes in sparse format
+  - 20 MT genes (MT-CO1..MT-CO20)
+  - 3 cell types with distinct marker genes
+  - ~5% cells with high MT percentage (>30%)
+
+CRISPR:
+  - 4046 sgRNAs (1000 genes × 4 sgRNAs + controls)
+  - 30 essential genes depleted in treatment (0.1-0.3x)
+  - 30 oncogenes enriched in treatment (2-5x)
+  - ~30% CV between replicates
+
+Gene Lists:
+  - A: 150 genes
+  - B: 120 genes (~70% overlap with A)
+  - C: 80 genes (~30% overlap with A, ~20% with B)
+  - Ranked: 500 genes with ~50 up/downregulated (padj<0.05)
+
+Survival:
+  - 200 patients with Weibull-distributed survival times
+  - Censoring at 1825 days with ~60% event rate
+  - High expression & stage IV: shorter survival
+
+Classification:
+  - 200 samples × 200 features
+  - First 20 features discriminative
+  - 100 Class_A, 100 Class_B
+
+Clustering:
+  - 50 samples × 500 genes
+  - 3 clusters (17+17+16 samples)
+  - 50 marker genes per cluster
+
+================================================================================
+USAGE IN PYTHON:
+
+import pandas as pd
+import numpy as np
+
+# Load RNA-seq counts
+rnaseq = pd.read_csv("rnaseq_counts.tsv", sep="\t", index_col=0)
+
+# Load metadata
+metadata = pd.read_csv("rnaseq_metadata.tsv", sep="\t")
+
+# Load ATAC peaks (narrowPeak format)
+peaks = pd.read_csv("atac_peaks.narrowPeak", sep="\t", header=None)
+
+# Load single-cell data
+scrna = pd.read_csv("scrna_counts.tsv", sep="\t", index_col=0)
+
+================================================================================
+USAGE IN R:
+
+# Load RNA-seq counts
+rnaseq <- read.delim("rnaseq_counts.tsv", row.names=1)
+
+# Load metadata
+metadata <- read.delim("rnaseq_metadata.tsv")
+
+# Load gene list
+genes <- read.delim("gene_list_A.txt", header=FALSE)$V1
+
+# Load ranked genes for enrichment
+ranked <- read.delim("ranked_gene_list.tsv")
+
+================================================================================
+DATA QUALITY CHARACTERISTICS:
+
+✓ Realistic count distributions (NegBinomial, Poisson)
+✓ Known differential expression signals
+✓ Batch effects and technical variation
+✓ Missing data patterns (MCAR, MCAR-like)
+✓ Overlapping peak sets for differential analysis
+✓ Multiple clustering structures for validation
+✓ Consistent naming conventions across datasets
+✓ Biological realism (cell types, gene markers, survival)
+✓ Sample metadata linked across all experiments
+✓ Gene/feature names compatible with real databases
+
+================================================================================
+RECOMMENDED TEST APPLICATIONS:
+
+1. Differential expression: rnaseq_counts.tsv + metadata
+2. Peak calling/differential: atac_peaks.narrowPeak + atac_peaks2.narrowPeak
+3. DMR analysis: methylation_beta.tsv + methylation_metadata.tsv
+4. Protein quantification: proteomics_intensities.tsv + metadata
+5. Cell type identification: scrna_counts.tsv + scrna_metadata.tsv
+6. CRISPR analysis: crispr_counts.tsv (essentiality/target prioritization)
+7. Gene set enrichment: ranked_gene_list.tsv + gene lists
+8. Survival analysis: survival_data.tsv (Cox regression, Kaplan-Meier)
+9. ML classification: ml_features.tsv + ml_labels.tsv
+10. Clustering/PCA: expression_matrix.tsv
+11. Visualization: All plot test data files
+12. API integration: api_test_* and crispr_library_genes.txt
+
+================================================================================

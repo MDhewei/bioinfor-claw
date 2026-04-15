@@ -1,0 +1,17 @@
+{
+  "mode": "test",
+  "treatment": [
+    "Treatment_1",
+    "Treatment_2"
+  ],
+  "control": [
+    "Control_1",
+    "Control_2"
+  ],
+  "norm_method": "median",
+  "fdr_cutoff": 0.25,
+  "lfc_cutoff": 1.0,
+  "mageck_used": false,
+  "n_genes": 1000,
+  "n_hits": 79
+}

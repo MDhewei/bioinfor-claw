@@ -101,6 +101,27 @@ These are required only when the selected modules need them.
 - `--essential-threshold`  
   Default: `-0.5`
 
+## Parameter decision guide
+
+Choose modules and parameters based on the biological question:
+
+| Signal in user request | Parameter to set |
+|---|---|
+| "expression across cell lines" | `--modules expression` |
+| "mutation landscape" | `--modules mutation` |
+| "copy number / amplification / deletion" | `--modules copy_number` |
+| "essential? dependency? CRISPR screen?" | `--modules essentiality` |
+| "what genes are co-expressed with X?" | `--modules coexpression` |
+| "what genes are co-essential with X?" | `--modules coessentiality` |
+| "full profile" or no specific module mentioned | `--modules full` |
+| "top 10 / top 20 correlated genes" | `--top-n 10` or `--top-n 20` |
+| "Spearman correlation" (non-parametric, safer) | `--corr-method spearman` |
+| "amplification threshold ≠ 1.0" | `--amp-threshold 0.5` (broader) or `--amp-threshold 2.0` (strict) |
+| "deep deletion only" | `--del-threshold -2.0` |
+| "essential genes" (stricter cutoff) | `--essential-threshold -1.0` |
+
+**Module minimisation rule**: Only pass data files for the requested modules. Do not supply all 5 data files unless `full` is requested.
+
 ## Agent rules
 
 1. Parse the requested modules from the user request.

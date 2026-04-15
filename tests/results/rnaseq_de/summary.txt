@@ -1,0 +1,12 @@
+prefix: treatment_vs_control
+group_a: control
+group_b: treatment
+n_samples_a: 6
+n_samples_b: 6
+method: deseq2
+genes_tested: 500
+fc_threshold: 1.0
+padj_threshold: 0.05
+n_significant: 40
+n_upregulated: 38
+n_downregulated: 2

@@ -1,0 +1,10 @@
+Methylation Analysis Summary
+============================================================
+Input beta matrix: /sessions/festive-admiring-sagan/mnt/bioinfor-claw/tests/data/methylation_beta.tsv
+CpGs analyzed: 3000
+Samples: 14
+Reference group: Control
+Array type: 450K
+Mode: dmp
+FDR cutoff: 0.05
+Delta beta cutoff: 0.2

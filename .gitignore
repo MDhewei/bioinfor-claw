@@ -1,0 +1,44 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Editor / OS ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Notebook checkpoints ---
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# --- Agent runtime artifacts (user data, not source) ---
+web_results/
+uploads/
+*.log
+
+# --- Skill caches (populated at first run) ---
+**/cache/*.json
+**/guidepro_cache/
+**/__pycache__/
+
+# --- Build outputs ---
+dist/
+build/
+*.tar.gz
+*.zip

@@ -128,6 +128,21 @@ Before delivering the list, verify:
 - ambiguous members are labeled or excluded
 - at least one stable source is attached for each row or class
 
+## Parameter decision guide
+
+| Signal in user request | Decision |
+|---|---|
+| "quick list" / "just give me the genes" | use **Fast mode**: one anchor source, core members only, minimal columns |
+| "comprehensive" / "publication-ready" / "with references" | use **Full mode**: multiple sources, per-row references, normalized identifiers |
+| "human genes" (default) | `--organism "Homo sapiens"` |
+| "mouse genes" | `--organism "Mus musculus"` |
+| "transcription factors" | include `sequence-specific transcription factor` as functional class |
+| "chromatin regulators / readers / writers / erasers" | include reader/writer/eraser domain annotation in output |
+| "receptor family" | include receptor tyrosine kinase or GPCR class labels |
+| "disputed members" | label as `Disputed` or `Extended` tier, keep separate from `Core` |
+| "Excel workbook output" | run `build_gene_list_workbook.py` as final step |
+| "normalize identifiers" | run `normalize_with_uniprot.py` after curation |
+
 ## Fast mode versus full mode
 
 ### Fast mode
