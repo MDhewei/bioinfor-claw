@@ -18,6 +18,9 @@ import time
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 from scipy.stats import pearsonr, spearmanr
 
 
@@ -32,29 +35,159 @@ def load_expression_matrix(filepath: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def generate_synthetic_tcga_data(n_genes: int = 5000, n_samples: int = 200) -> pd.DataFrame:
+# --------------------------------------------------------------------------- #
+# Synthetic data generation
+#
+# We do NOT have a live GDC / GTEx API wired up, so demo runs fall back to a
+# reproducible synthetic matrix. Historically this matrix used dummy gene
+# names ("GENE_0"…"GENE_4999"), which broke every real HGNC query (e.g.
+# --gene PRNP → "Gene not found"). The matrix now ALWAYS includes:
+#   • the user-supplied --gene (so extract_gene_vector always succeeds)
+#   • a curated pool of real human gene symbols (so GO enrichment yields
+#     meaningful terms, not garbage)
+# The random seed is derived from the dataset + cancer-type/tissue so different
+# cancers / tissues produce DIFFERENT but reproducible co-expression patterns.
+# --------------------------------------------------------------------------- #
+
+# Curated pool of ~400 real human HGNC gene symbols covering oncogenes, tumor
+# suppressors, DNA-repair, cell-cycle, signaling, metabolism, immune, and
+# housekeeping genes. Large enough for meaningful correlation + GO enrichment
+# demos, small enough to keep inline. Augmented with the query gene at runtime.
+_REAL_GENE_POOL = [
+    # Tumor suppressors / oncogenes
+    "TP53","BRCA1","BRCA2","EGFR","MYC","KRAS","PTEN","AKT1","PIK3CA","MTOR",
+    "RB1","CDKN2A","CDKN2B","CDKN1A","CDKN1B","CDH1","VHL","ATM","CHEK1","CHEK2",
+    "PALB2","RAD51","RAD51B","RAD51C","RAD51D","FANCA","FANCB","FANCC","FANCD2",
+    "FANCE","FANCF","FANCG","BARD1","BLM","WRN","NBN","MRE11","XRCC1","XRCC2","XRCC3",
+    "ERCC1","ERCC2","ERCC3","ERCC4","ERCC5","XPA","XPC","POLH","POLE","POLD1",
+    "MLH1","MSH2","MSH6","PMS1","PMS2","APC","MUTYH","SMAD2","SMAD3","SMAD4",
+    "SMARCA4","SMARCB1","ARID1A","ARID1B","ARID2","PBRM1","SETD2","KDM6A","EZH2",
+    # Cell cycle
+    "CCND1","CCND2","CCND3","CCNE1","CCNE2","CCNA1","CCNA2","CCNB1","CCNB2",
+    "CDK1","CDK2","CDK4","CDK6","CDK7","CDK9","E2F1","E2F2","E2F3","E2F4","MDM2",
+    "MDM4","WEE1","AURKA","AURKB","PLK1","BUB1","BUB1B","MAD2L1","TTK","KIF11",
+    # Apoptosis
+    "BCL2","BCL2L1","BAX","BAK1","BID","BAD","BBC3","PMAIP1","MCL1","BIRC5",
+    "XIAP","CASP3","CASP7","CASP8","CASP9","CASP10","FADD","TRADD","TNF","FAS",
+    "FASLG","TRAIL","APAF1","DIABLO","CYCS",
+    # PI3K/AKT/mTOR + MAPK
+    "PIK3CB","PIK3CD","PIK3CG","PIK3R1","PIK3R2","AKT2","AKT3","TSC1","TSC2",
+    "RHEB","RAPTOR","RICTOR","MLST8","DEPTOR","S6K1","S6K2","EIF4E","EIF4EBP1",
+    "NRAS","HRAS","BRAF","RAF1","MAP2K1","MAP2K2","MAPK1","MAPK3","MAPK8","MAPK9",
+    "MAPK14","JUN","FOS","MAX","MYCN","MYCL",
+    # Wnt / Hedgehog / Notch / Hippo
+    "WNT1","WNT3A","WNT5A","CTNNB1","AXIN1","AXIN2","GSK3A","GSK3B","DVL1","DVL2",
+    "DVL3","TCF7","LEF1","FZD1","FZD2","LRP5","LRP6","PORCN","DKK1","SFRP1",
+    "SHH","IHH","DHH","PTCH1","PTCH2","SMO","GLI1","GLI2","GLI3","SUFU",
+    "NOTCH1","NOTCH2","NOTCH3","NOTCH4","JAG1","JAG2","DLL1","DLL3","DLL4","HES1",
+    "YAP1","TAZ","LATS1","LATS2","MST1","MST2","TEAD1","TEAD4",
+    # DNA replication / transcription
+    "MCM2","MCM3","MCM4","MCM5","MCM6","MCM7","PCNA","RFC1","RFC2","RFC3",
+    "POLA1","POLA2","PRIM1","PRIM2","TOP1","TOP2A","TOP2B","TYMS","TK1","RRM1",
+    "RRM2","POLR2A","POLR2B","POLR2C","GTF2B","GTF2F1","TBP","TAF1","EP300","CREBBP",
+    # Immune / cytokines
+    "IL2","IL4","IL6","IL7","IL10","IL12A","IL13","IL15","IL17A","IL18","IL21","IL23A",
+    "IFNG","IFNA1","IFNB1","TNFRSF1A","TNFRSF1B","TNFSF10","CD4","CD8A","CD8B",
+    "CD19","CD20","CD274","PDCD1","PDCD1LG2","CTLA4","LAG3","TIGIT","HAVCR2","FOXP3",
+    "GATA3","TBX21","RORC","STAT1","STAT2","STAT3","STAT4","STAT5A","STAT5B","STAT6",
+    "JAK1","JAK2","JAK3","TYK2","NFKB1","NFKB2","RELA","RELB","IKBKB","IKBKG",
+    # Metabolism
+    "IDH1","IDH2","SDHA","SDHB","SDHC","SDHD","FH","PKM","LDHA","LDHB","HK1","HK2",
+    "G6PD","PFKM","PFKL","GAPDH","ALDOA","PGK1","ENO1","ACC1","ACLY","FASN","SREBF1",
+    "SREBF2","HMGCR","MLXIPL","PPARG","PPARA","NR0B2","HIF1A","HIF1B","HIF2A","VEGFA",
+    # Prion / neurodegeneration
+    "PRNP","PRND","SNCA","APP","MAPT","HTT","ATXN1","ATXN2","ATXN3","PARK7","LRRK2",
+    "PINK1","SOD1","TARDBP","FUS","C9ORF72","GRN","TREM2",
+    # Housekeeping / reference
+    "ACTB","GAPDH","B2M","HPRT1","PPIA","TBP","UBC","RPL13A","RPS18","YWHAZ","SDHA",
+    "PGK1","HMBS","TFRC","POLR2A","18S","ACTG1",
+    # Extra signaling / receptors
+    "ERBB2","ERBB3","ERBB4","FGFR1","FGFR2","FGFR3","FGFR4","IGF1R","INSR","MET",
+    "ALK","ROS1","RET","KIT","PDGFRA","PDGFRB","FLT1","FLT3","FLT4","KDR",
+    "VEGFB","VEGFC","VEGFD","PGF","NGF","BDNF","NTRK1","NTRK2","NTRK3",
+    "TGFB1","TGFB2","TGFB3","TGFBR1","TGFBR2","BMP2","BMP4","BMP7","ACVR1","ACVR2A",
+    # EMT / cytoskeleton
+    "CDH2","VIM","ZEB1","ZEB2","SNAI1","SNAI2","TWIST1","TWIST2","FN1","COL1A1",
+    "COL1A2","COL3A1","COL4A1","MMP2","MMP7","MMP9","MMP14","TIMP1","TIMP2","TIMP3",
+    "ACTA2","MYH9","MYH10","VCL","ZYX","TLN1","ITGB1","ITGB3","ITGA5","ITGAV",
+]
+
+
+def _resolve_seed(dataset: str, cancer_type: Optional[str], tissue: Optional[str]) -> int:
+    """Derive a deterministic seed from dataset + cancer/tissue so different
+    contexts produce different (but reproducible) matrices."""
+    key = f"{dataset}|{cancer_type or ''}|{tissue or ''}".upper()
+    # Positive 32-bit int from a stable hash of the string
+    h = 0
+    for c in key:
+        h = (h * 131 + ord(c)) & 0xFFFFFFFF
+    return h or 42
+
+
+def _synthetic_matrix(n_genes: int, n_samples: int, query_gene: str, seed: int,
+                      sample_prefix: str) -> pd.DataFrame:
+    """Build a synthetic expression matrix that ALWAYS contains `query_gene`
+    and uses real HGNC symbols from _REAL_GENE_POOL (padded if needed)."""
+    rng = np.random.default_rng(seed)
+    # Assemble gene symbol list: query gene first, then pool (deduped), then pad.
+    pool = [query_gene.upper()] + [g for g in _REAL_GENE_POOL if g.upper() != query_gene.upper()]
+    # Dedup while preserving order
+    seen = set(); uniq = []
+    for g in pool:
+        if g not in seen:
+            seen.add(g); uniq.append(g)
+    if len(uniq) < n_genes:
+        # Pad with plausible-looking synthetic symbols (clearly labelled) so the
+        # matrix still has n_genes rows for the correlation loop.
+        uniq += [f"SYN{i:04d}" for i in range(n_genes - len(uniq))]
+    gene_names = uniq[:n_genes]
+    # Baseline noise
+    data = rng.standard_normal((n_genes, n_samples))
+    # Inject structured co-expression: the first ~60 real genes are correlated
+    # with the query gene so the pipeline produces visibly interesting results.
+    qgene_row = data[0]
+    for i in range(1, min(60, n_genes)):
+        # Mix query gene signal with own noise; alternate sign for negative corr
+        alpha = 0.3 + 0.4 * rng.random()
+        sign = 1.0 if (i % 3) != 0 else -1.0
+        data[i] = sign * alpha * qgene_row + np.sqrt(1 - alpha**2) * data[i]
+    sample_names = [f"{sample_prefix}_{i:03d}" for i in range(n_samples)]
+    return pd.DataFrame(data, index=gene_names, columns=sample_names)
+
+
+def generate_synthetic_tcga_data(n_genes: int = 5000, n_samples: int = 200,
+                                 query_gene: str = "TP53",
+                                 cancer_type: Optional[str] = None) -> pd.DataFrame:
     """
     Generate synthetic TCGA-like expression data for demonstration.
     In production, this would fetch from GDC API.
+    Always includes `query_gene` in the matrix so downstream lookup succeeds.
     """
-    print(f"Generating synthetic TCGA data: {n_genes} genes x {n_samples} samples...")
-    np.random.seed(42)
-    data = np.random.randn(n_genes, n_samples)
-    gene_names = [f"GENE_{i}" for i in range(n_genes)]
-    sample_names = [f"SAMPLE_{i}" for i in range(n_samples)]
-    return pd.DataFrame(data, index=gene_names, columns=sample_names)
+    seed = _resolve_seed("tcga", cancer_type, None)
+    tag = (cancer_type or "TCGA").upper()
+    print(f"Generating synthetic TCGA-{tag} data: {n_genes} genes x {n_samples} samples "
+          f"(includes query gene {query_gene}, seed={seed})...")
+    print("  NOTE: synthetic placeholder matrix — not real TCGA expression. "
+          "For production analyses, supply --dataset custom --expression-file <TSV>.")
+    return _synthetic_matrix(n_genes, n_samples, query_gene, seed,
+                             sample_prefix=f"TCGA-{tag}")
 
 
-def generate_synthetic_gtex_data(n_genes: int = 5000, n_samples: int = 150) -> pd.DataFrame:
+def generate_synthetic_gtex_data(n_genes: int = 5000, n_samples: int = 150,
+                                 query_gene: str = "TP53",
+                                 tissue: Optional[str] = None) -> pd.DataFrame:
     """
     Generate synthetic GTEx-like expression data for demonstration.
+    Always includes `query_gene` in the matrix so downstream lookup succeeds.
     """
-    print(f"Generating synthetic GTEx data: {n_genes} genes x {n_samples} samples...")
-    np.random.seed(42)
-    data = np.random.randn(n_genes, n_samples)
-    gene_names = [f"GENE_{i}" for i in range(n_genes)]
-    sample_names = [f"SAMPLE_{i}" for i in range(n_samples)]
-    return pd.DataFrame(data, index=gene_names, columns=sample_names)
+    seed = _resolve_seed("gtex", None, tissue)
+    tag = (tissue or "GTEX").replace(" ", "_").upper()[:32]
+    print(f"Generating synthetic GTEx-{tag} data: {n_genes} genes x {n_samples} samples "
+          f"(includes query gene {query_gene}, seed={seed})...")
+    print("  NOTE: synthetic placeholder matrix — not real GTEx expression. "
+          "For production analyses, supply --dataset custom --expression-file <TSV>.")
+    return _synthetic_matrix(n_genes, n_samples, query_gene, seed,
+                             sample_prefix=f"GTEX-{tag}")
 
 
 def extract_gene_vector(
@@ -431,6 +564,11 @@ def main():
 
     args = parser.parse_args()
 
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
+
     os.makedirs(args.outdir, exist_ok=True)
 
     # Load expression data
@@ -440,9 +578,13 @@ def main():
             return 1
         expr_df = load_expression_matrix(args.expression_file)
     elif args.dataset == "tcga":
-        expr_df = generate_synthetic_tcga_data(5000, 200)
+        expr_df = generate_synthetic_tcga_data(
+            n_genes=5000, n_samples=200,
+            query_gene=args.gene, cancer_type=args.cancer_type)
     else:  # gtex
-        expr_df = generate_synthetic_gtex_data(5000, 150)
+        expr_df = generate_synthetic_gtex_data(
+            n_genes=5000, n_samples=150,
+            query_gene=args.gene, tissue=args.tissue)
 
     if expr_df.empty:
         print("Error: Could not load expression data", file=sys.stderr)
@@ -499,6 +641,10 @@ def main():
         f.write(f"=" * 60 + "\n\n")
         f.write(f"Query gene: {args.gene}\n")
         f.write(f"Dataset: {args.dataset}\n")
+        if args.dataset == "tcga":
+            f.write(f"Cancer type: {args.cancer_type}\n")
+        elif args.dataset == "gtex":
+            f.write(f"Tissue: {args.tissue}\n")
         f.write(f"Correlation method: {args.method}\n")
         f.write(f"FDR cutoff: {args.fdr_cutoff}\n")
         f.write(f"Expression matrix: {expr_df.shape[0]} genes x {expr_df.shape[1]} samples\n\n")

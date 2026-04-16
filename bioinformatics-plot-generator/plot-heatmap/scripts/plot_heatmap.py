@@ -12,6 +12,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import matplotlib.patches as mpatches
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.cm import ScalarMappable
@@ -424,6 +427,10 @@ def main():
     parser.add_argument('--output-matrix', default=None, help='Save processed matrix as TSV')
 
     args = parser.parse_args()
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'base_fontsize', None),
+    )
 
     # Load and validate data
     print(f"Loading matrix from {args.input}...")

@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from typing import List, Optional, Set, Tuple
 
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import pandas as pd
 
 
@@ -647,6 +650,11 @@ def main():
     parser.add_argument("--del-threshold", type=float, default=-1.0)
     parser.add_argument("--essential-threshold", type=float, default=-0.5)
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     modules = parse_modules(args.modules)
     gene = normalize_gene_symbol(args.gene)

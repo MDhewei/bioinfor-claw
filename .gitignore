@@ -32,6 +32,15 @@ web_results/
 uploads/
 *.log
 
+# --- Downloaded datasets (large, user-specific) ---
+data/
+**/data/depmap/
+public-datasets-access-and-download/**/data/
+
+# --- Skill run outputs (generated at runtime) ---
+**/out/
+**/*_output/
+
 # --- Skill caches (populated at first run) ---
 **/cache/*.json
 **/guidepro_cache/

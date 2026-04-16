@@ -16,6 +16,9 @@ from itertools import combinations
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import matplotlib.patches as patches
 from matplotlib.patches import Circle, Wedge
 try:
@@ -512,6 +515,11 @@ def main():
     parser.add_argument('--plot-upset', action='store_true', help='Generate UpSet plot (3+ lists)')
 
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     os.makedirs(args.outdir, exist_ok=True)
 

@@ -1,6 +1,6 @@
 ---
 name: depmap-analysis-for-gene
-description: Perform modular DepMap analysis for a single gene across cancer cell lines, including expression, mutation, copy number, essentiality, co-expression, and co-essentiality. If required data are missing, this skill may invoke depmap-download-data to fetch only the needed datasets.
+description: "DepMap analysis for a gene across CANCER CELL LINES (NOT patient samples). Modules: expression, mutation, copy number, essentiality. Also includes standalone co-expression (depmap_coexpression.py) and co-essentiality (depmap_coessentiality.py) scripts for cell-line correlations. For patient/tumor co-expression use coexpression-for-gene (TCGA/GTEx) instead."
 ---
 
 # DepMap Analysis for Gene
@@ -111,8 +111,9 @@ Choose modules and parameters based on the biological question:
 | "mutation landscape" | `--modules mutation` |
 | "copy number / amplification / deletion" | `--modules copy_number` |
 | "essential? dependency? CRISPR screen?" | `--modules essentiality` |
-| "what genes are co-expressed with X?" | `--modules coexpression` |
-| "what genes are co-essential with X?" | `--modules coessentiality` |
+| "what genes are co-expressed with X?" | **Use standalone script** `depmap_coexpression.py` (produces barplot + network + FDR table). Fallback: `--modules coexpression` in main script (TSV only). |
+| "what genes are co-essential with X?" | **Use standalone script** `depmap_coessentiality.py` (produces barplot + network + FDR table). Fallback: `--modules coessentiality` in main script (TSV only). |
+| "co-expression in TCGA / patient samples" | **Wrong skill!** Use `coexpression-for-gene` (TCGA patient-level). This skill is DepMap cell lines only. |
 | "full profile" or no specific module mentioned | `--modules full` |
 | "top 10 / top 20 correlated genes" | `--top-n 10` or `--top-n 20` |
 | "Spearman correlation" (non-parametric, safer) | `--corr-method spearman` |
@@ -172,8 +173,20 @@ Do not require all five data files unless `full` is requested.
 - `<GENE>.essentiality_barplot.png`
 - `<GENE>.essentiality_barplot.pdf`
 
-### Correlation
-- `<GENE>.coexpression.tsv`
+### Co-expression (standalone script: `depmap_coexpression.py`)
+- `<GENE>.depmap_coexpression_full.tsv` — all correlations with FDR
+- `<GENE>.depmap_coexpression_sig.tsv` — FDR-filtered significant genes
+- `<GENE>.depmap_coexpression_barplot.png / .pdf` — top co-expressed bar chart
+- `<GENE>.depmap_coexpression_network.png / .pdf` — network visualization
+
+### Co-essentiality (standalone script: `depmap_coessentiality.py`)
+- `<GENE>.depmap_coessentiality_full.tsv` — all correlations with FDR
+- `<GENE>.depmap_coessentiality_sig.tsv` — FDR-filtered significant genes
+- `<GENE>.depmap_coessentiality_barplot.png / .pdf` — top co-essential bar chart
+- `<GENE>.depmap_coessentiality_network.png / .pdf` — network visualization
+
+### Legacy co-expression/co-essentiality (via `--modules` in main script)
+- `<GENE>.coexpression.tsv` — top-N only, no FDR, no plots (use standalone scripts above for richer output)
 - `<GENE>.coessentiality.tsv`
 
 ## Execution policy
@@ -220,7 +233,31 @@ The agent should resolve file paths from one of the following sources:
 
 The agent should not assume one fixed directory layout unless it is known to be valid in the current environment.
 
-## Example command patterns
+## Standalone co-expression / co-essentiality scripts
+
+These produce richer outputs (barplot, network, FDR table) than the `--modules coexpression/coessentiality` path in the main script. **Prefer these for any user request about co-expressed or co-essential genes.**
+
+### DepMap co-expression (expression across cell lines)
+```bash
+python scripts/depmap_coexpression.py \
+    --gene TP53 \
+    --expression-file <EXPRESSION_CSV> \
+    --method pearson \
+    --top-n 30 \
+    --fdr-cutoff 0.05
+```
+
+### DepMap co-essentiality (CRISPR dependency across cell lines)
+```bash
+python scripts/depmap_coessentiality.py \
+    --gene TP53 \
+    --essentiality-file <ESSENTIALITY_CSV> \
+    --method pearson \
+    --top-n 30 \
+    --fdr-cutoff 0.05
+```
+
+## Example command patterns (main script)
 
 ### Expression only
 `python scripts/depmap_analysis_for_gene.py --gene <GENE> --modules expression --expression-file <EXPRESSION_FILE> --metadata-file <METADATA_FILE> --outdir <OUTDIR>`

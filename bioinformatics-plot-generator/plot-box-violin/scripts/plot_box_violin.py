@@ -11,6 +11,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import matplotlib.patches as mpatches
 from matplotlib.patches import Rectangle
 
@@ -124,7 +127,22 @@ class PlotGenerator:
         self.stats_results = {}
 
     def load_data(self):
-        """Load and validate input data."""
+        """Load and validate input data.
+
+        Supports two input shapes:
+
+        1. LONG format (original) — specify --value-col and --group-col.
+           One row per observation; one numeric value column, one group column.
+
+        2. WIDE format — each column is a group; each row is one observation.
+           Activated by:
+             a) --wide-cols "colA,colB,colC"  (explicit subset of columns)
+             b) --wide-cols auto              (use all numeric columns)
+             c) Neither --value-col nor --group-col given, but the file
+                has 2+ numeric columns (auto-detected wide format).
+           Different groups may have different sample sizes — NaN rows in
+           each column are dropped independently.
+        """
         input_path = Path(self.args.input)
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {self.args.input}")
@@ -135,7 +153,81 @@ class PlotGenerator:
         else:
             self.data = pd.read_csv(input_path)
 
-        # Validate columns
+        # Decide layout: long vs wide
+        has_long_args = bool(self.args.value_col) and bool(self.args.group_col)
+        wide_mode = None  # None | 'explicit' | 'auto-all' | 'auto-detected'
+
+        if self.args.wide_cols:
+            wide_mode = 'auto-all' if self.args.wide_cols.strip().lower() == 'auto' else 'explicit'
+        elif not has_long_args:
+            # Auto-detect: if no long-format args given, fall back to treating
+            # every numeric column as a group.
+            numeric_cols = [c for c in self.data.columns
+                            if pd.api.types.is_numeric_dtype(self.data[c])]
+            if len(numeric_cols) >= 2:
+                wide_mode = 'auto-detected'
+                print(f"[auto] No --value-col/--group-col provided; detected "
+                      f"{len(numeric_cols)} numeric columns — treating as wide format.")
+            else:
+                raise ValueError(
+                    "No --value-col/--group-col given and only "
+                    f"{len(numeric_cols)} numeric column(s) found. "
+                    "Provide --value-col + --group-col (long format) or "
+                    "--wide-cols 'colA,colB,colC' (wide format)."
+                )
+
+        if wide_mode:
+            # ── WIDE FORMAT ─────────────────────────────────────────────────
+            if wide_mode == 'explicit':
+                wanted = [c.strip() for c in self.args.wide_cols.split(',') if c.strip()]
+                missing = [c for c in wanted if c not in self.data.columns]
+                if missing:
+                    raise ValueError(f"--wide-cols: columns not found in data: {missing}")
+                cols_to_use = wanted
+            else:
+                cols_to_use = [c for c in self.data.columns
+                               if pd.api.types.is_numeric_dtype(self.data[c])]
+                if len(cols_to_use) < 2:
+                    raise ValueError(
+                        f"--wide-cols auto: found only {len(cols_to_use)} numeric "
+                        f"column(s); need at least 2 to compare."
+                    )
+
+            # Melt: stack each column into (value, group) pairs, dropping NaNs per column.
+            values_list = []
+            groups_list = []
+            for col in cols_to_use:
+                col_vals = pd.to_numeric(self.data[col], errors='coerce').dropna().values
+                values_list.append(col_vals)
+                groups_list.append(np.full(len(col_vals), col, dtype=object))
+
+            self.values = np.concatenate(values_list) if values_list else np.array([])
+            self.groups = np.concatenate(groups_list) if groups_list else np.array([])
+
+            if self.args.group_order:
+                self.group_names = self.args.group_order.split(',')
+                # Validate: every requested group should be one of the selected cols.
+                bad = [g for g in self.group_names if g not in cols_to_use]
+                if bad:
+                    raise ValueError(f"--group-order: unknown group(s): {bad}. "
+                                     f"Available: {cols_to_use}")
+            else:
+                self.group_names = list(cols_to_use)  # preserve file column order
+
+            # Back-fill value_col / group_col labels so axis labels still work.
+            if not self.args.value_col:
+                self.args.value_col = 'Value'
+            if not self.args.group_col:
+                self.args.group_col = 'Group'
+
+            print(f"Loaded WIDE data: {len(self.values)} observations across "
+                  f"{len(self.group_names)} groups ({', '.join(self.group_names)})")
+            for grp in self.group_names:
+                n = int(np.sum(self.groups == grp))
+                print(f"  {grp}: n={n}")
+            return
+
+        # ── LONG FORMAT (original path) ─────────────────────────────────────
         if self.args.value_col not in self.data.columns:
             raise ValueError(f"Value column '{self.args.value_col}' not found in data")
         if self.args.group_col not in self.data.columns:
@@ -757,9 +849,23 @@ def main():
 
     # Required arguments
     parser.add_argument('--input', required=True, help='Input TSV/CSV file')
-    parser.add_argument('--value-col', required=True, help='Column name for numeric values')
-    parser.add_argument('--group-col', required=True, help='Column name for grouping')
     parser.add_argument('--output', required=True, help='Output file (PNG/SVG/PDF)')
+
+    # Data shape — two mutually compatible modes:
+    #   LONG: specify both --value-col and --group-col.
+    #   WIDE: specify --wide-cols "colA,colB,colC" (or "auto" for all numeric
+    #         columns). In wide format every row is one observation and every
+    #         selected column is one group.
+    # If none of --value-col / --group-col / --wide-cols is supplied, the
+    # script auto-detects wide format when the file has >=2 numeric columns.
+    parser.add_argument('--value-col', default=None,
+                        help='LONG format: column name for numeric values. '
+                             'Omit together with --group-col if using --wide-cols.')
+    parser.add_argument('--group-col', default=None,
+                        help='LONG format: column name for grouping.')
+    parser.add_argument('--wide-cols', default=None,
+                        help='WIDE format: comma-separated column names (each becomes '
+                             'a group), or "auto" to use every numeric column.')
 
     # Plot style
     parser.add_argument('--plot-type', default='box', choices=['box', 'violin', 'both', 'raincloud'],
@@ -867,6 +973,10 @@ def main():
     parser.add_argument('--output-stats', help='Save statistics table')
 
     args = parser.parse_args()
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'base_fontsize', None),
+    )
 
     try:
         generator = PlotGenerator(args)

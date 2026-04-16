@@ -21,6 +21,9 @@ import warnings
 from typing import Dict, List, Optional, Set, Tuple
 
 import matplotlib
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -403,6 +406,11 @@ def main():
     parser.add_argument("--top-n", type=int, default=50000, help="Top N peaks to analyze")
 
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     ensure_dir(args.outdir)
 

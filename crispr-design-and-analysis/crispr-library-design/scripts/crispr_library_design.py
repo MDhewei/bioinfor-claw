@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import numpy as np
 import pandas as pd
 import requests
@@ -394,6 +397,11 @@ def main():
     parser.add_argument("--gc-max", type=float, default=0.8)
 
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     # Parse gene list
     genes = load_gene_list(args.genes)

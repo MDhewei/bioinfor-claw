@@ -19,6 +19,9 @@ from collections import Counter
 import requests
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 
 
 class PubMedSearcher:
@@ -535,6 +538,11 @@ Examples:
     parser.add_argument('--abstract-words', type=int, default=100, help='Abstract preview word count')
 
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     searcher = PubMedSearcher(args.outdir)
     success = searcher.search(

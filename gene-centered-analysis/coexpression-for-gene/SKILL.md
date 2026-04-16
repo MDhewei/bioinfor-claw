@@ -1,9 +1,20 @@
 ---
 name: coexpression-for-gene
-description: Find genes co-expressed with a query gene across TCGA or GTEx expression data. Computes Pearson/Spearman correlations, applies FDR correction, runs GO enrichment on the top co-expressed genes, and generates a co-expression network visualization.
+description: "Co-expression in PATIENT SAMPLES (TCGA tumors / GTEx normal tissues). NOT for cell lines — use depmap_coexpression.py for DepMap cell-line co-expression. Computes Pearson/Spearman correlations, FDR correction, GO enrichment, and network visualization. Currently uses synthetic placeholder data unless --dataset custom --expression-file is supplied."
 ---
 
-# Co-expression for Gene
+# Co-expression for Gene (TCGA / GTEx Patient Samples)
+
+> **⚠️ DATA STATUS:** This skill currently uses **synthetic placeholder data**
+> when `--dataset tcga` or `--dataset gtex` is selected. The synthetic matrix
+> includes real HGNC gene symbols and structured correlations so the pipeline
+> runs end-to-end, but the results are NOT derived from real patient expression.
+> For real analyses, supply your own expression matrix via
+> `--dataset custom --expression-file <TSV>` (e.g. a UCSC Xena per-cancer matrix).
+
+> **⚠️ SCOPE:** This skill analyzes co-expression across **patient/tissue samples**
+> (TCGA tumors, GTEx normal tissues). For co-expression across **cancer cell lines**
+> (DepMap), use `depmap-analysis-for-gene` → `depmap_coexpression.py` instead.
 
 ## Purpose
 Discover genes whose expression patterns correlate with a query gene, enabling:
@@ -27,6 +38,8 @@ Discover genes whose expression patterns correlate with a query gene, enabling:
 - You're analyzing time-series or developmental gene expression
 - You need single-cell resolution (use scRNA-seq tools)
 - You want cell-type specific co-expression (tissue level analysis only)
+- You want co-expression across **cancer cell lines** → use `depmap-analysis-for-gene/depmap_coexpression.py`
+- You want **co-essentiality** (CRISPR dependency correlations) → use `depmap-analysis-for-gene/depmap_coessentiality.py`
 
 ## Expected Inputs & Outputs
 

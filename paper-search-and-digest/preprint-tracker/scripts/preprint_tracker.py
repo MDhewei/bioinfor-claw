@@ -16,6 +16,9 @@ import re
 import requests
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 
 
 class PreprintTracker:
@@ -524,6 +527,11 @@ Examples:
                        default='markdown', help='Output format')
 
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     tracker = PreprintTracker(args.outdir)
     success = tracker.track(

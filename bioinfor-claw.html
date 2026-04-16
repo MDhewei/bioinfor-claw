@@ -290,6 +290,13 @@ select.field-input{cursor:pointer;}
 .empty-st{text-align:center;padding:30px 14px;color:var(--muted);font-size:12px;line-height:1.8;}
 .empty-ic{font-size:26px;margin-bottom:8px;opacity:.45;}
 
+/* Markdown tables */
+.md-table{width:100%;border-collapse:collapse;font-size:13px;line-height:1.5;}
+.md-table th,.md-table td{border:1px solid var(--border);padding:6px 10px;}
+.md-table th{background:var(--surf2);font-weight:600;font-size:12px;}
+.md-table tr:nth-child(even){background:var(--surf);}
+.md-table tr:hover{background:var(--g50,rgba(0,0,0,.03));}
+
 /* Toast */
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:8px 18px;background:var(--g900);color:#fff;border-radius:20px;font-size:12.5px;font-weight:600;z-index:9999;animation:up .2s ease;box-shadow:var(--sh-md);}
 </style>
@@ -359,7 +366,14 @@ select.field-input{cursor:pointer;}
       </div>
       <div class="field-group">
         <div class="field-label">Model</div>
-        <select class="field-input" id="modelSelect" onchange="onModelChange()"></select>
+        <div style="display:flex;gap:6px;align-items:stretch;">
+          <select class="field-input" id="modelSelect" onchange="onModelChange()" style="flex:1;"></select>
+          <button type="button" id="refreshModelsBtn" onclick="refreshModels()" title="Fetch the latest model list from this provider"
+                  onmouseover="this.style.background='var(--g100)';this.style.borderColor='var(--g500)';this.style.color='var(--g700)';"
+                  onmouseout="this.style.background='var(--surf)';this.style.borderColor='var(--border2)';this.style.color='var(--text)';"
+                  style="padding:8px 12px;border:1px solid var(--border2);border-radius:8px;background:var(--surf);color:var(--text);cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;transition:all .15s;">↻ Refresh</button>
+        </div>
+        <div class="field-hint" id="modelsMeta" style="margin-top:6px;">Using curated defaults. Click <strong>↻ Refresh</strong> to fetch the latest models from the provider (requires API key).</div>
       </div>
       <div class="field-group" id="customEndpointGroup" style="display:none">
         <div class="field-label">API Endpoint</div>
@@ -578,6 +592,217 @@ const PROVIDERS = {
 };
 
 // ═══════════════════════════════════════════════════════════
+//  MODEL-LIST LIVE FETCHERS
+//  Each provider-specific fetcher returns {models:[...], labels:[...]}.
+//  Called by refreshModels() when the user clicks ↻ Refresh.
+// ═══════════════════════════════════════════════════════════
+
+// Filter names that look like a chat/completion-capable LLM (exclude embeddings, image, tts, whisper, moderation, etc.).
+function isChatModelId(id){
+  const s=(id||'').toLowerCase();
+  if(!s) return false;
+  if(/(embedding|embed|davinci-edit|similarity|search|whisper|tts|speech|audio|dall|image|vision-preview|moderation|babbage|ada-00|cursor|realtime|transcrib)/.test(s)) return false;
+  if(/^(text-|code-)/.test(s)) return false; // legacy completions
+  // Positive match for known chat families across providers
+  return /(gpt|o[1-9]|chatgpt|claude|gemini|mistral|mixtral|codestral|ministral|minimax|llama|qwen|deepseek|grok|command|yi-|glm|moonshot|kimi|pangu|ernie|doubao|spark|step|haiku|sonnet|opus)/.test(s);
+}
+
+// Sort model IDs "newest-first" heuristically: later version numbers / dates come first.
+// Works well for naming schemes like "gpt-5.4", "gpt-4.1", "claude-sonnet-4-5", "gemini-2.5-pro".
+function sortModelsNewestFirst(ids){
+  return ids.slice().sort((a,b)=>{
+    // Pull out all numeric tokens and compare lexicographically descending.
+    const toKey=s=>(s.match(/\d+/g)||['0']).map(n=>n.padStart(6,'0')).join('.');
+    const ka=toKey(a), kb=toKey(b);
+    if(ka!==kb) return ka<kb?1:-1;
+    return a<b?1:-1;
+  });
+}
+
+// Make a pretty human label for a raw model id.
+function labelForModel(id, recommended){
+  const pretty = id
+    .replace(/^gpt-/,'GPT-')
+    .replace(/^claude-/,'Claude ')
+    .replace(/^gemini-/,'Gemini ')
+    .replace(/^mistral-/,'Mistral ')
+    .replace(/^mixtral-/,'Mixtral ')
+    .replace(/^codestral-/,'Codestral ')
+    .replace(/^MiniMax-/,'MiniMax ')
+    .replace(/[-_]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+  return recommended ? `${pretty} (latest)` : pretty;
+}
+
+async function fetchAnthropicModels(key){
+  const r=await fetch('https://api.anthropic.com/v1/models',{headers:{
+    'x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'
+  }});
+  if(!r.ok) throw new Error(`Anthropic /v1/models → ${r.status}`);
+  const j=await r.json();
+  const data=(j.data||[]).map(m=>m.id).filter(isChatModelId);
+  return sortModelsNewestFirst(data);
+}
+
+async function fetchOpenAIModels(key){
+  const r=await fetch('https://api.openai.com/v1/models',{headers:{'Authorization':'Bearer '+key}});
+  if(!r.ok) throw new Error(`OpenAI /v1/models → ${r.status}`);
+  const j=await r.json();
+  const data=(j.data||[]).map(m=>m.id).filter(isChatModelId);
+  return sortModelsNewestFirst(data);
+}
+
+async function fetchGoogleModels(key){
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models?key='+encodeURIComponent(key));
+  if(!r.ok) throw new Error(`Google models → ${r.status}`);
+  const j=await r.json();
+  const data=(j.models||[])
+    .filter(m=>(m.supportedGenerationMethods||[]).some(x=>/generate/i.test(x)))
+    .map(m=>(m.name||'').replace(/^models\//,''))
+    .filter(isChatModelId);
+  return sortModelsNewestFirst(data);
+}
+
+async function fetchMistralModels(key){
+  const r=await fetch('https://api.mistral.ai/v1/models',{headers:{'Authorization':'Bearer '+key}});
+  if(!r.ok) throw new Error(`Mistral /v1/models → ${r.status}`);
+  const j=await r.json();
+  const data=(j.data||[]).map(m=>m.id).filter(isChatModelId);
+  return sortModelsNewestFirst(data);
+}
+
+// OpenAI-compatible endpoint probe — works for Custom, and fallback for any provider that exposes /models.
+async function fetchOpenAICompatModels(endpoint, key){
+  const base=(endpoint||'').replace(/\/$/,'');
+  if(!base) throw new Error('No endpoint set');
+  const r=await fetch(base+'/models',{headers:{'Authorization':'Bearer '+key}});
+  if(!r.ok) throw new Error(`${base}/models → ${r.status}`);
+  const j=await r.json();
+  const data=(j.data||[]).map(m=>m.id).filter(Boolean);
+  return sortModelsNewestFirst(data);
+}
+
+const MODEL_FETCHERS = {
+  anthropic: fetchAnthropicModels,
+  openai:    fetchOpenAIModels,
+  google:    fetchGoogleModels,
+  mistral:   fetchMistralModels,
+  minimax:   null, // MiniMax doesn't publish a public model-list endpoint; keep curated defaults.
+  custom:    (key)=>fetchOpenAICompatModels(state.customEndpoint, key),
+};
+
+const MODEL_CACHE_PREFIX = 'bioinfor_claw_models_';
+
+function loadCachedModels(provider){
+  try{
+    const raw=localStorage.getItem(MODEL_CACHE_PREFIX+provider);
+    if(!raw) return null;
+    const j=JSON.parse(raw);
+    if(!j||!Array.isArray(j.models)||!j.models.length) return null;
+    return j; // {models, labels, fetchedAt}
+  }catch{ return null; }
+}
+function saveCachedModels(provider, models, labels){
+  try{
+    localStorage.setItem(MODEL_CACHE_PREFIX+provider, JSON.stringify({
+      models, labels, fetchedAt: Date.now()
+    }));
+  }catch{}
+}
+function clearCachedModels(provider){
+  try{ localStorage.removeItem(MODEL_CACHE_PREFIX+provider); }catch{}
+}
+
+// Called by the ↻ Refresh button.
+async function refreshModels(){
+  const p = state.provider;
+  const prov = PROVIDERS[p];
+  const btn = document.getElementById('refreshModelsBtn');
+  const meta = document.getElementById('modelsMeta');
+  const key = state.keys[p] || '';
+  if(!MODEL_FETCHERS[p]){
+    toast('ℹ️ '+prov.name+' does not publish a public model list — keeping curated defaults.');
+    return;
+  }
+  if(!key){
+    toast('⚠️ Save your '+prov.name+' API key first, then click ↻ Refresh.');
+    return;
+  }
+  const originalText=btn.textContent;
+  btn.textContent='… fetching'; btn.disabled=true;
+  if(meta) meta.innerHTML='Contacting '+prov.name+' …';
+  try{
+    const ids = await MODEL_FETCHERS[p](key);
+    if(!ids || !ids.length) throw new Error('no chat-capable models returned');
+    // Keep ALL fetched ids; mark the first (newest) as recommended in its label.
+    const labels = ids.map((id,i)=>labelForModel(id, i===0));
+    prov.models = ids;
+    prov.modelLabels = labels;
+    saveCachedModels(p, ids, labels);
+    // If current model no longer exists, switch to the newest.
+    if(!ids.includes(state.model)) state.model = ids[0];
+    updateModelSelect();
+    saveState();
+    const when = new Date().toLocaleTimeString();
+    if(meta) meta.innerHTML = '✓ Loaded '+ids.length+' models from '+prov.name+' at '+when+'. <a href="#" onclick="resetModelsToCurated(event)">Reset to curated list</a>';
+    toast('✓ '+prov.name+': '+ids.length+' models loaded');
+  }catch(err){
+    console.error('refreshModels failed:', err);
+    if(meta) meta.innerHTML='⚠️ Couldn\'t fetch from '+prov.name+': '+(err.message||err)+'. Using curated defaults.';
+    toast('⚠️ Refresh failed — see Settings for details');
+  }finally{
+    btn.textContent=originalText; btn.disabled=false;
+  }
+}
+
+// Curated defaults as hardcoded at app startup — used when user resets or cache missing.
+const CURATED_DEFAULTS = (function(){
+  const snap={};
+  for(const p in PROVIDERS){ snap[p]={models:PROVIDERS[p].models.slice(), labels:PROVIDERS[p].modelLabels.slice()}; }
+  return snap;
+})();
+
+function resetModelsToCurated(ev){
+  if(ev) ev.preventDefault();
+  const p=state.provider;
+  const curated=CURATED_DEFAULTS[p];
+  if(!curated) return;
+  PROVIDERS[p].models = curated.models.slice();
+  PROVIDERS[p].modelLabels = curated.labels.slice();
+  clearCachedModels(p);
+  if(!PROVIDERS[p].models.includes(state.model)) state.model = PROVIDERS[p].models[0];
+  updateModelSelect();
+  const meta=document.getElementById('modelsMeta');
+  if(meta) meta.innerHTML='Using curated defaults. Click <strong>↻ Refresh</strong> to fetch the latest models from the provider (requires API key).';
+  saveState();
+  toast('↺ Reverted to curated list');
+}
+
+// Hydrate a provider's model list from localStorage cache (if present) — called on load + on provider change.
+function applyCachedModelsIfAny(provider){
+  const cached=loadCachedModels(provider);
+  if(!cached) return false;
+  PROVIDERS[provider].models = cached.models.slice();
+  PROVIDERS[provider].modelLabels = cached.labels.slice();
+  return true;
+}
+
+function updateModelsMeta(){
+  const meta=document.getElementById('modelsMeta');
+  if(!meta) return;
+  const p=state.provider;
+  const cached=loadCachedModels(p);
+  if(cached){
+    const mins=Math.floor((Date.now()-cached.fetchedAt)/60000);
+    const when = mins<1 ? 'just now' : mins<60 ? mins+' min ago' : Math.floor(mins/60)+' h ago';
+    meta.innerHTML='✓ '+cached.models.length+' models from '+PROVIDERS[p].name+' ('+when+'). <a href="#" onclick="refreshModels();return false;">Refresh again</a> · <a href="#" onclick="resetModelsToCurated(event)">reset</a>';
+  } else {
+    meta.innerHTML='Using curated defaults. Click <strong>↻ Refresh</strong> to fetch the latest models from the provider (requires API key).';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════════
 let state = {
@@ -609,6 +834,11 @@ let state = {
   },
 };
 let _streamCtrl = null;
+// Aborted by the Stop button to halt an in-flight agent loop. Recreated at the
+// start of every runAgentLoop() invocation. Plumbed into callLLMWithTools()
+// and runTool() so HTTP requests can be cancelled mid-flight, and checked
+// between agent steps so the loop exits even if the request finished.
+let _agentAbortCtrl = null;
 
 // ═══════════════════════════════════════════════════════════
 //  AGENT MEMORY SYSTEM
@@ -915,12 +1145,12 @@ function saveState() {
 //  PROVIDER / MODEL UI
 // ═══════════════════════════════════════════════════════════
 function selectProvider(p,btn) {
-  state.provider=p; state.model=PROVIDERS[p].models[0];
+  state.provider=p; applyCachedModelsIfAny(p); state.model=PROVIDERS[p].models[0];
   document.querySelectorAll('.llm-tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active'); syncProviderUI(); saveState();
 }
 function selectProviderModal(p) {
-  state.provider=p; state.model=PROVIDERS[p].models[0];
+  state.provider=p; applyCachedModelsIfAny(p); state.model=PROVIDERS[p].models[0];
   document.querySelectorAll('.provider-card').forEach(c=>c.classList.remove('selected'));
   document.getElementById('pc-'+p).classList.add('selected');
   document.querySelectorAll('.llm-tab').forEach(t=>t.classList.toggle('active',t.dataset.p===p));
@@ -937,10 +1167,14 @@ function onModelChange() {
 function updateModelSelect() {
   const sel=document.getElementById('modelSelect');
   const p=PROVIDERS[state.provider];
-  sel.innerHTML=p.models.map((m,i)=>`<option value="${m}"${m===state.model?' selected':''}>${p.modelLabels[i]}</option>`).join('');
+  // If currently-selected model is no longer in the list (e.g. after refresh), fall back to the newest.
+  if(!p.models.includes(state.model)) state.model=p.models[0];
+  sel.innerHTML=p.models.map((m,i)=>`<option value="${m}"${m===state.model?' selected':''}>${p.modelLabels[i]||m}</option>`).join('');
   document.getElementById('modelPill').textContent=modelShortName(state.model);
+  updateModelsMeta();
 }
 function syncProviderUI() {
+  applyCachedModelsIfAny(state.provider);
   updateModelSelect(); updateKeyStatus();
   document.querySelectorAll('.provider-card').forEach(c=>c.classList.remove('selected'));
   document.getElementById('pc-'+state.provider)?.classList.add('selected');
@@ -1695,10 +1929,13 @@ async function sendMessage() {
 }
 
 function stopStreaming(){
+  // Cancel in-flight streaming response (if any) AND any active agent loop.
   _streamCtrl?.abort();
+  _agentAbortCtrl?.abort();
   document.getElementById('sendBtn').disabled=false;
   document.getElementById('stopBtn').classList.remove('visible');
   setStatusBusy(false);
+  toast('⏹ Stopped');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1721,7 +1958,7 @@ async function callAnthropicStream(sys,msgs,model,onChunk){
   const res=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',signal:_streamCtrl.signal,
     headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model,max_tokens:4096,system:sys,messages:msgs,stream:true})
+    body:JSON.stringify({model,max_tokens:8192,system:sys,messages:msgs,stream:true})
   });
   if(!res.ok){const d=await res.json();throw new Error(d.error?.message||'API error '+res.status);}
   const reader=res.body.getReader(),dec=new TextDecoder();
@@ -1743,7 +1980,7 @@ async function callAnthropic(sys,msgs,model){
   const key=state.keys['anthropic'];
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
     headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model,max_tokens:4096,system:sys,messages:msgs})});
+    body:JSON.stringify({model,max_tokens:8192,system:sys,messages:msgs})});
   const d=await r.json();if(d.error)throw new Error(d.error.message);
   return d.content.map(b=>b.text||'').join('');
 }
@@ -1759,7 +1996,7 @@ async function callOpenAI(sys,msgs,model){
   else{url='https://api.openai.com/v1/chat/completions';}
   const r=await fetch(url,{method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
-    body:JSON.stringify({model,messages:[{role:'system',content:sys},...msgs],max_tokens:4096})});
+    body:JSON.stringify({model,messages:[{role:'system',content:sys},...msgs],max_tokens:8192})});
   const d=await r.json();if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));
   return d.choices[0].message.content;
 }
@@ -1769,7 +2006,7 @@ async function callGoogle(sys,msgs,model){
   const url='https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+key;
   const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents,generationConfig:{maxOutputTokens:4096}})});
+    body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents,generationConfig:{maxOutputTokens:8192}})});
   const d=await r.json();if(d.error)throw new Error(d.error.message);
   return d.candidates[0].content.parts.map(p=>p.text||'').join('');
 }
@@ -1850,6 +2087,17 @@ const AGENT_TOOLS = [
       }, required:['run_id','filename']}
     }
   },
+  {
+    type:'function',
+    function:{
+      name:'write_text_file',
+      description:'Save text content to a file on the server so it can be passed as input_file to run_script. Use this when the user pastes data directly in the chat (e.g. a gene list, sample table, config) instead of attaching a file. Returns the server path to pass as input_file.',
+      parameters:{type:'object', properties:{
+        content:{type:'string', description:'The text content to save (e.g. one gene per line, CSV data, TSV data).'},
+        filename:{type:'string', description:'(optional) Desired filename, e.g. "gene_list.txt" or "samples.tsv". Default: "agent_input.txt".'}
+      }, required:['content']}
+    }
+  },
 ];
 
 // Translate OpenAI tool format → Anthropic native format
@@ -1863,13 +2111,13 @@ function toolsToAnthropic(tools){
 
 // Call the LLM with tools. Returns {text, tool_calls:[{id,name,args}], raw}
 // Works for Anthropic and OpenAI-compatible providers.
-async function callLLMWithTools(sys, msgs, tools){
+async function callLLMWithTools(sys, msgs, tools, signal){
   const prov=state.provider;
   if(prov==='anthropic'){
     const key=state.keys['anthropic'];
-    const body={model:state.model, max_tokens:4096, system:sys,
+    const body={model:state.model, max_tokens:8192, system:sys,
       messages:msgs, tools:toolsToAnthropic(tools)};
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal,
       headers:{'Content-Type':'application/json','x-api-key':key,
         'anthropic-version':'2023-06-01',
         'anthropic-dangerous-direct-browser-access':'true'},
@@ -1894,10 +2142,10 @@ async function callLLMWithTools(sys, msgs, tools){
   else{url='https://api.openai.com/v1/chat/completions';}
   const key=state.keys[prov];
   const fullMsgs=[{role:'system',content:sys}, ...msgs];
-  const r=await fetch(url,{method:'POST',
+  const r=await fetch(url,{method:'POST',signal,
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
     body:JSON.stringify({model:state.model, messages:fullMsgs,
-      tools, tool_choice:'auto', max_tokens:4096})});
+      tools, tool_choice:'auto', max_tokens:8192})});
   const d=await r.json();
   if(d.error) throw new Error(d.error.message||JSON.stringify(d.error));
   const choice=d.choices[0].message;
@@ -1941,19 +2189,20 @@ function appendToolMessages(msgs, assistantResp, toolResults){
 }
 
 // Execute a tool call by POSTing to the server.
-async function runTool(name, args){
+async function runTool(name, args, signal){
   if(!state.serverConnected) await detectServer();
   if(!state.serverConnected){
     return {success:false, error:'Server not connected (start run_bioinfor_claw.py)'};
   }
   const url = state.serverUrl + '/api/tools/' + encodeURIComponent(name);
   try{
-    const r=await fetch(url,{method:'POST',
+    const r=await fetch(url,{method:'POST',signal,
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(args||{})});
     const d=await r.json();
     return d;
   }catch(e){
+    if(e.name==='AbortError') return {success:false, aborted:true, error:'Aborted by user'};
     return {success:false, error:'Tool call failed: '+e.message};
   }
 }
@@ -1987,8 +2236,7 @@ function renderAgentStep(stepNum, assistantResp, toolResults){
     .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi,'')
     .trim();
   if(visibleText){
-    // Linkify any server paths the LLM mentioned so the user gets download links inline
-    html += '<div class="msg-content">'+ linkifyServerPaths(visibleText) +'</div>';
+    html += '<div class="msg-content">'+ renderMarkdown(visibleText) +'</div>';
   }
   html += '<div class="agent-step" style="background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px;font-family:ui-monospace,monospace;font-size:12px;">';
   html += '<div style="color:var(--accent);font-weight:600;margin-bottom:6px;">🧠 Agent step '+ stepNum +'</div>';
@@ -2054,6 +2302,158 @@ function renderAgentStep(stepNum, assistantResp, toolResults){
 
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
+// ── Lightweight Markdown → HTML renderer ──
+// Handles: tables, headers, bold, italic, inline code, code blocks, lists, blockquotes, links, HR.
+// Does NOT load an external library — keeps the app self-contained.
+function renderMarkdown(src){
+  const lines = String(src).split('\n');
+  const out = [];
+  let i = 0;
+
+  // Helper: render inline markdown (bold, italic, code, links, images)
+  function inlineMd(s){
+    let h = escapeHtml(s);
+    // inline code
+    h = h.replace(/`([^`\n]+?)`/g, '<code style="background:var(--surf2);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>');
+    // images (before links)
+    h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" style="max-width:100%;">');
+    // links
+    h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent);">$1</a>');
+    // bold+italic ***x*** or ___x___
+    h = h.replace(/\*{3}(.+?)\*{3}/g, '<strong><em>$1</em></strong>');
+    h = h.replace(/_{3}(.+?)_{3}/g, '<strong><em>$1</em></strong>');
+    // bold **x** or __x__
+    h = h.replace(/\*{2}(.+?)\*{2}/g, '<strong>$1</strong>');
+    h = h.replace(/_{2}(.+?)_{2}/g, '<strong>$1</strong>');
+    // italic *x* or _x_  (word-boundary aware for underscores)
+    h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    h = h.replace(/(?<=\s|^)_(.+?)_(?=\s|$|[.,;!?])/g, '<em>$1</em>');
+    // strikethrough ~~x~~
+    h = h.replace(/~~(.+?)~~/g, '<del>$1</del>');
+    return h;
+  }
+
+  // Detect if a block of lines starting at idx is a markdown table
+  function isTable(idx){
+    if(idx+1 >= lines.length) return false;
+    const l0 = lines[idx].trim(), l1 = lines[idx+1].trim();
+    return l0.includes('|') && /^\|?\s*[-:]+[-| :]*$/.test(l1);
+  }
+
+  // Parse & render a table block, return new line index
+  function renderTable(idx){
+    // Header row
+    const hdrCells = lines[idx].trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+    // Separator row — detect alignment
+    const sepCells = lines[idx+1].trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+    const aligns = sepCells.map(c=>{
+      if(c.startsWith(':') && c.endsWith(':')) return 'center';
+      if(c.endsWith(':')) return 'right';
+      return 'left';
+    });
+    let tbl = '<div style="overflow-x:auto;margin:8px 0;"><table class="md-table"><thead><tr>';
+    hdrCells.forEach((c,j)=>{
+      tbl += '<th style="text-align:'+( aligns[j]||'left')+'">'+inlineMd(c)+'</th>';
+    });
+    tbl += '</tr></thead><tbody>';
+    let k = idx+2;
+    while(k < lines.length && lines[k].trim().includes('|') && !/^\s*$/.test(lines[k])){
+      const cells = lines[k].trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+      tbl += '<tr>';
+      cells.forEach((c,j)=>{
+        tbl += '<td style="text-align:'+(aligns[j]||'left')+'">'+inlineMd(c)+'</td>';
+      });
+      tbl += '</tr>';
+      k++;
+    }
+    tbl += '</tbody></table></div>';
+    out.push(tbl);
+    return k;
+  }
+
+  while(i < lines.length){
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Fenced code block
+    if(trimmed.startsWith('```')){
+      const lang = trimmed.slice(3).trim();
+      const codeLines = [];
+      i++;
+      while(i < lines.length && !lines[i].trim().startsWith('```')){
+        codeLines.push(lines[i]); i++;
+      }
+      i++; // skip closing ```
+      out.push('<pre style="background:var(--surf2);padding:10px;border-radius:6px;overflow-x:auto;font-size:0.85em;"><code>'
+        +escapeHtml(codeLines.join('\n'))+'</code></pre>');
+      continue;
+    }
+
+    // Table
+    if(isTable(i)){
+      i = renderTable(i);
+      continue;
+    }
+
+    // Blank line → paragraph break
+    if(!trimmed){ out.push(''); i++; continue; }
+
+    // Headings
+    const hm = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if(hm){
+      const lvl = hm[1].length;
+      const sizes = {1:'1.5em',2:'1.3em',3:'1.15em',4:'1.05em',5:'1em',6:'0.95em'};
+      out.push('<div style="font-size:'+sizes[lvl]+';font-weight:700;margin:12px 0 6px 0;">'+inlineMd(hm[2])+'</div>');
+      i++; continue;
+    }
+
+    // HR
+    if(/^[-*_]{3,}\s*$/.test(trimmed)){
+      out.push('<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">');
+      i++; continue;
+    }
+
+    // Blockquote
+    if(trimmed.startsWith('>')){
+      const bqLines = [];
+      while(i < lines.length && lines[i].trim().startsWith('>')){
+        bqLines.push(lines[i].trim().replace(/^>\s?/,''));
+        i++;
+      }
+      out.push('<blockquote style="border-left:3px solid var(--accent);padding-left:10px;margin:6px 0;color:var(--text-dim);">'+inlineMd(bqLines.join('<br>'))+'</blockquote>');
+      continue;
+    }
+
+    // Unordered list
+    if(/^[-*+]\s/.test(trimmed)){
+      const items = [];
+      while(i < lines.length && /^\s*[-*+]\s/.test(lines[i])){
+        items.push(lines[i].replace(/^\s*[-*+]\s/,''));
+        i++;
+      }
+      out.push('<ul style="margin:6px 0;padding-left:22px;">'+items.map(it=>'<li>'+inlineMd(it)+'</li>').join('')+'</ul>');
+      continue;
+    }
+
+    // Ordered list
+    if(/^\d+[.)]\s/.test(trimmed)){
+      const items = [];
+      while(i < lines.length && /^\s*\d+[.)]\s/.test(lines[i])){
+        items.push(lines[i].replace(/^\s*\d+[.)]\s/,''));
+        i++;
+      }
+      out.push('<ol style="margin:6px 0;padding-left:22px;">'+items.map(it=>'<li>'+inlineMd(it)+'</li>').join('')+'</ol>');
+      continue;
+    }
+
+    // Normal paragraph line
+    out.push('<p style="margin:4px 0;line-height:1.6;">'+inlineMd(trimmed)+'</p>');
+    i++;
+  }
+
+  return out.join('\n');
+}
+
 // Turn file references mentioned in the LLM's prose into clickable download links.
 // Handles: /api/results/{run_id}/{name}, absolute /.../out/.../name.ext, or bare basenames
 // referenced alongside a run_id.
@@ -2110,10 +2510,40 @@ function buildAgentSystemPrompt(stepBudget){
     '6. For MULTI-STEP workflows (e.g. "run all 5 modules" or "all cancer types"), call run_script once per module/dataset with different args. For SINGLE-STEP workflows, one successful run is the answer.',
     '7. Once you have all the output files the user asked for, STOP making tool calls and write a short summary.',
     '',
-    'CRITICAL — NO UNSOLICITED RETRIES OF THE SAME RUN:',
-    '- Do NOT call run_script a second time with the IDENTICAL (skill, script, input_file, args) tuple to "improve" output, tweak styling, or try alternative parameters unless the user explicitly asked for a variation.',
-    '- Different run_script calls with DIFFERENT args (e.g. next module, next dataset, next cancer type) are ALWAYS allowed and expected for modular workflows.',
-    '- After your final run succeeds, your next message MUST have zero tool_calls and just describe the result.',
+    'ABSOLUTE RULE — NEVER PIVOT TO AN UNRELATED SKILL ON FAILURE:',
+    '- The skill you choose MUST match what the user asked for. If the user asks for "co-expression of PRNP", the only acceptable skill is one whose SKILL.md describes co-expression. Do NOT silently fall back to a broad-purpose skill like `pubmed-search`, `paper-digest-single`, or `gene-list-overlap` just because they are easier to run successfully. That gives the user the wrong analysis dressed up as success.',
+    '- When the right skill fails AFTER 2-3 reasonable arg-correction retries, STOP retrying. Do NOT switch skills as a "fallback". Instead: write a short final message that names the skill, quotes the actual stderr, and tells the user what is needed (e.g. "supply --expression-file <TSV>", "fix the missing column", "the GDC API returned 503 — try again later"). Honest failure is always better than misleading success.',
+    '- Switching to a DIFFERENT skill is only permitted when (a) the user explicitly asks for a different approach in a follow-up message, OR (b) the workflow legitimately requires multiple skills (e.g. download → analyze → plot is one pipeline, where each step is the right skill for that stage).',
+    '- A pubmed/literature search is NEVER an automatic fallback for a failed analysis. It is its own skill, used only when the user explicitly asks for papers/literature/references.',
+    '- WRONG: user asks "co-expression for PRNP in COAD" → coexpression-for-gene fails → agent runs pubmed-search "PRNP COAD coexpression" and reports that as if it answered the question.',
+    '- RIGHT: user asks "co-expression for PRNP in COAD" → coexpression-for-gene fails → agent reports "coexpression-for-gene exited non-zero with: <stderr>. The skill currently uses synthetic data when no --expression-file is supplied. Please attach a real expression matrix, or ask me to switch to a different analysis."',
+    '',
+    'CO-EXPRESSION / CO-ESSENTIALITY SKILL DISAMBIGUATION:',
+    '- "co-expression" + patient/tumor/TCGA/GTEx/cancer type/tissue → coexpression-for-gene (TCGA/GTEx patient samples)',
+    '- "co-expression" + cell line/DepMap/CCLE/cancer cell lines → depmap-analysis-for-gene → depmap_coexpression.py (DepMap cell lines)',
+    '- "co-essentiality" / "co-dependency" / "CRISPR dependency correlation" → depmap-analysis-for-gene → depmap_coessentiality.py',
+    '- When the user says "co-expression" without specifying context, ASK: "Do you mean co-expression across patient tumor samples (TCGA/GTEx) or across cancer cell lines (DepMap)?"',
+    '- NEVER run coexpression-for-gene for cell-line data, and NEVER run depmap_coexpression.py for patient/tumor data.',
+    '',
+    'ABSOLUTE RULE — NEVER FABRICATE EXECUTION:',
+    '- It is FORBIDDEN to write any phrase that implies you ran something — including "已重新生成", "已修改", "已调整", "已更新", "已重新画", "已经改为", "I regenerated", "I have updated", "I have changed", "Here is the updated figure", "Done, the new plot is …" — UNLESS in the SAME assistant response you ALSO emit a tool_calls array containing a real run_script call. Text without a tool call is a hallucinated success and is treated as a bug.',
+    '- If the user asks for a styling/parameter change (font, color, size, height, width, top-N, threshold, ordering, theme, dpi, jitter, alpha, palette …), the ONLY correct first response is `tool_calls: [run_script(...)]` with the new args. Prose alone is not allowed for this case.',
+    '- WRONG (do not do this): assistant text "已使用 Arial 字体重新生成，高度调整为 5 英寸" with no tool_calls. → This lies to the user; no file was produced.',
+    '- RIGHT: assistant emits tool_calls=[run_script({skill, script, input_file:<previous>, args:[..., "--font","Arial","--height","5", ...]})]. After the tool result comes back, THEN you may write "Done — Arial font, height=5 applied." as the final answer.',
+    '',
+    'CRITICAL — NO UNSOLICITED RETRIES, BUT ALWAYS EXECUTE USER-REQUESTED CHANGES:',
+    '- Do NOT call run_script a second time with the IDENTICAL (skill, script, input_file, args) tuple on your OWN initiative to "improve" output, tweak styling, or try alternative parameters.',
+    '- IF THE USER EXPLICITLY ASKS FOR A CHANGE in a follow-up turn (e.g. "make the labels bigger", "use top 10 only", "change figure size to 10x10", "文字注释不要重合", "把字体换成 Helvetica", "颜色换成蓝色", "重新生成", "redo", "regenerate", "try again with …"), this IS an explicit variation request and you MUST call run_script again with ADJUSTED args to satisfy it. Writing a text plan that says "I will change X and regenerate" without actually calling run_script is a BUG — always execute the change.',
+    '- When the user requests a parameter/style change, figure out the right flag from list_skill_scripts (if you don\'t already know it) and call run_script with the NEW args. Reuse the previous input_file unless a new file was attached.',
+    '- Different run_script calls with DIFFERENT args (e.g. next module, next dataset, next cancer type, or user-requested parameter changes) are ALWAYS allowed and expected.',
+    '- After the CURRENT user request is fully satisfied (not just "a previous turn succeeded"), your next message has zero tool_calls and just describes the result. A new user message asking for changes opens a fresh obligation to act.',
+    '',
+    'HANDLING DATA PASTED IN CHAT (no file attachment):',
+    '- When the user types or pastes data directly in the chat (e.g. a gene list, a sample table, CSV/TSV rows) WITHOUT attaching a file, you MUST save it to the server FIRST before running any script.',
+    '- Call write_text_file({content:"<the pasted data>", filename:"gene_list.txt"}) → it returns {path}.',
+    '- Then call run_script({..., input_file: <that path>, ...}) as usual.',
+    '- Example: user pastes "TP53\\nBRCA1\\nEGFR\\nMYC" → write_text_file({content:"TP53\\nBRCA1\\nEGFR\\nMYC", filename:"gene_list.txt"}) → {path:"/…/gene_list.txt"} → run_script({skill_id:"gene-list-analysis/go-analysis-for-gene-list", script:"go_enrichment_plotter.py", input_file:"/…/gene_list.txt", args:["--organism","human"]}).',
+    '- Never skip the write_text_file step — run_script cannot accept inline text, only file paths.',
     '',
     'RULES FOR run_script:',
     '- Do NOT pass --input / --output / --outdir — those are auto-wired by the server.',
@@ -2129,6 +2559,12 @@ function buildAgentSystemPrompt(stepBudget){
     '- Keep your reply to pure narrative prose: what was run, what the result means, and any caveat. Nothing else.',
     '',
     'Be concise in your text replies. Let the tools do the work.',
+    '',
+    'OUTPUT LENGTH MANAGEMENT:',
+    '- When summarising multi-dataset results (e.g. pan-cancer analysis across many cancer types), keep the final summary SHORT. Put detailed per-dataset numbers in the TSV output table, NOT in your prose.',
+    '- Use a compact results table (markdown) with at most the 5-6 most notable rows, then one sentence naming the full output file for the complete table.',
+    '- NEVER reproduce the ENTIRE output table in your text reply. Highlight the top findings only.',
+    '- If listing all items would exceed ~300 words, truncate and say "See the full output file for all N results."',
     '',
     'CONVERSATION CONTINUITY:',
     '- The user/assistant exchanges below this prompt are the actual conversation history with this user — treat them as your real memory of what has already been discussed and run.',
@@ -2180,6 +2616,47 @@ function detectModularBudgetBump(text, baseBudget){
 }
 
 // Main agent loop.
+// ──────────────────────────────────────────────────────────────────────────
+// FALSE-EXECUTION-CLAIM detection helpers (used inside the agent loop).
+//
+// The model sometimes responds to a follow-up styling/parameter change
+// (e.g. "把字体换成 Arial，高度再大一点") with prose like "已重新生成…"
+// without actually invoking run_script. We detect that combination and
+// re-prompt instead of showing the user a fabricated success message.
+// ──────────────────────────────────────────────────────────────────────────
+function looksLikeChangeRequest(text){
+  if(!text) return false;
+  const t = String(text).toLowerCase();
+  // English: regenerate/redo/change/update/use/make + style nouns or imperatives
+  const enChange =
+       /\b(regenerate|re[-\s]?run|redo|re[-\s]?do|try\s+again|update|change|switch|use|make)\b/.test(t)
+    || /\b(font|color|colour|size|height|width|figure\s*size|labels?|legend|title|axis|theme|palette|style|dpi|resolution|points?|jitter|alpha|opacity|order|sort|top\s*\d+|threshold)\b/.test(t)
+    || /\b(bigger|smaller|larger|wider|taller|thinner|thicker|brighter|darker)\b/.test(t);
+  // Chinese: 重新生成 / 改 / 换 / 调整 / 字体 / 颜色 / 大小 / 高度 / 宽度 / 标签 / 重画 / 重做 / 再 / 更大 / 更小
+  const zhChange =
+       /(重新生成|重新画|重画|重做|再画|再来一次|再生成|重做一次|再跑|再来)/.test(text)
+    || /(改成?|换成?|调整|更换|修改|设为|设置|设成|改为|换为)/.test(text)
+    || /(字体|字号|大小|高度|宽度|尺寸|颜色|配色|主题|标签|文字|图例|标题|坐标轴|刻度|分辨率|点的大小|散点|透明度|顺序|排序)/.test(text)
+    || /(更大|更小|大一[点些]|小一[点些]|高一[点些]|宽一[点些]|增加|减少|放大|缩小)/.test(text);
+  return enChange || zhChange;
+}
+
+function looksLikeFalseExecutionClaim(text){
+  if(!text) return false;
+  const t = String(text).toLowerCase();
+  // English first-person past/present-perfect "I did" claims that imply a file was produced
+  const enClaim =
+       /\b(i'?ve|i have|i)\s+(re[-\s]?generated|re[-\s]?ran|re[-\s]?run|regenerated|updated|adjusted|changed|modified|switched|set|applied|produced|created|made|saved|written|exported)\b/.test(t)
+    || /\b(figure|plot|chart|image|file|output)\s+(has\s+been|is\s+now|was)\s+(regenerated|updated|saved|adjusted|changed|modified|exported)\b/.test(t)
+    || /\b(here'?s|attached\s+is)\s+the\s+(updated|new|regenerated|adjusted)\s+(figure|plot|chart|image|file|output)\b/.test(t);
+  // Chinese completion claims: 已 / 已经 + verb of execution
+  const zhClaim =
+       /(已重新生成|已经重新生成|已重新绘制|已重画|已重做|已重新跑|重新生成完成)/.test(text)
+    || /(已修改|已经修改|已调整|已经调整|已更新|已经更新|已应用|已改成|已换成|已设置为|已设为|已经改为|已经换为)/.test(text)
+    || /(已保存|已导出|已生成新|新的(图|文件|结果)已)/.test(text);
+  return enClaim || zhClaim;
+}
+
 async function runAgentLoop(userText, filesSnap){
   const baseBudget = state.agentStepBudget || 40;
   const MAX_STEPS = detectModularBudgetBump(userText, baseBudget);
@@ -2188,6 +2665,9 @@ async function runAgentLoop(userText, filesSnap){
                 baseBudget,'→',MAX_STEPS);
   }
   const sys=buildAgentSystemPrompt(MAX_STEPS);
+  // Fresh AbortController for THIS agent invocation. stopStreaming() aborts it.
+  _agentAbortCtrl = new AbortController();
+  const signal = _agentAbortCtrl.signal;
 
   // ── Upload attached files to server so LLM can pass path as input_file ──
   const uploadedFiles=[];  // [{name, path}]
@@ -2262,6 +2742,17 @@ async function runAgentLoop(userText, filesSnap){
   const errors = [];
   // Collapsible trace for power users — built up silently, only shown on demand
   const trace = [];
+  // Track whether the model has actually executed run_script during THIS user
+  // turn. Used by the false-claim guard below: if the model's final text says
+  // "已重新生成 / regenerated / updated" but ranScriptThisTurn is still false
+  // (and the user was asking for a change), we inject a corrective message
+  // and let the loop run again instead of returning the lie to the user.
+  let ranScriptThisTurn = false;
+  let falseClaimCorrections = 0;
+  const MAX_FALSE_CLAIM_CORRECTIONS = 1;
+  let _truncationContinuations = 0;    // count of auto-continuations on max_tokens
+  const MAX_TRUNCATION_CONTINUATIONS = 3;
+  let _truncatedPrefix = '';           // accumulated text from truncated responses
   // Fingerprint-based dedup: block ONLY exact (script + args) duplicates.
   // Different scripts or different args are legit modular / multi-dataset runs
   // and must be allowed through.
@@ -2279,12 +2770,26 @@ async function runAgentLoop(userText, filesSnap){
   };
 
   for(let step=1; step<=MAX_STEPS; step++){
+    // Honour ⏹ Stop button before each new round.
+    if(signal.aborted){
+      stopAgentStatus(status); status.remove();
+      renderFinalAnswer('⏹ **Stopped by user** after '+(step-1)+' step(s). Trace + any partial outputs below.',
+                        allFiles, errors, trace);
+      return null;
+    }
     let resp;
     try{
-      resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS);
+      resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS, signal);
     }catch(e){
       stopAgentStatus(status); status.remove();
-      appendMsg('assistant','**Agent error (step '+step+'):** '+e.message);
+      if(e.name==='AbortError' || signal.aborted){
+        renderFinalAnswer('⏹ **Stopped by user** during step '+step+'. Trace + any partial outputs below.',
+                          allFiles, errors, trace);
+        return null;
+      }
+      // Real error — still show whatever progress was made.
+      renderFinalAnswer('**Agent error (step '+step+'):** '+(e.message||String(e))+'\n\nTrace + any partial outputs below.',
+                        allFiles, errors, trace);
       return null;
     }
 
@@ -2312,9 +2817,17 @@ async function runAgentLoop(userText, filesSnap){
           continue;
         }
       }
+      // If the user clicked Stop while we were processing earlier tool calls in
+      // this round, skip the rest with a "user-stopped" placeholder so we don't
+      // launch fresh server work that takes minutes to complete.
+      if(signal.aborted){
+        toolResults.push({id:tc.id, name:tc.name, result:{success:false, aborted:true, error:'Aborted by user'}});
+        trace.push({step, tool:tc.name, args:tc.args, result:{aborted:true}});
+        continue;
+      }
       updateAgentStatus(status, tc.name, tc.args, step);
       console.log('[agent] step',step,'→',tc.name, tc.args);
-      const raw = await runTool(tc.name, tc.args);
+      const raw = await runTool(tc.name, tc.args, signal);
       const compact = compactToolResult(tc.name, raw);
       toolResults.push({id:tc.id, name:tc.name, result:compact});
       if(compact && compact.output_files && compact.output_files.length){
@@ -2332,11 +2845,49 @@ async function runAgentLoop(userText, filesSnap){
          && compact.returncode === 0
          && compact.output_files && compact.output_files.length){
         successfulFingerprints.add(fingerprintOf(tc.args));
+        ranScriptThisTurn = true;
       }
     }
 
     // If no tool calls → final answer, we're done
     if(resp.tool_calls.length===0){
+      // ── TRUNCATION GUARD ──
+      // If the response was cut off by max_tokens, inject a continuation prompt
+      // so the model finishes its answer instead of leaving the user hanging.
+      const wasMaxTokens = (resp.stop_reason === 'max_tokens' || resp.stop_reason === 'length');
+      if(wasMaxTokens && _truncationContinuations < MAX_TRUNCATION_CONTINUATIONS){
+        _truncationContinuations++;
+        _truncatedPrefix += String(resp.text||'');
+        console.warn('[agent] response truncated by max_tokens (continuation #'+_truncationContinuations+') — requesting continuation');
+        msgs.push({role:'assistant', content: String(resp.text||'')});
+        msgs.push({role:'user', content: '(Your previous response was cut off. Please continue from exactly where you stopped — do not repeat what you already wrote.)'});
+        continue;
+      }
+      // If we did truncation continuations, merge all parts
+      if(_truncatedPrefix){
+        resp.text = _truncatedPrefix + '\n' + (resp.text||'');
+        _truncatedPrefix = '';
+      }
+      // ── FALSE-CLAIM GUARD ──
+      // The model sometimes writes "已重新生成 / regenerated / updated" without
+      // actually calling run_script. Detect that and force one more loop pass
+      // with an explicit correction, instead of showing the lie to the user.
+      if(falseClaimCorrections < MAX_FALSE_CLAIM_CORRECTIONS
+         && !ranScriptThisTurn
+         && looksLikeChangeRequest(userText)
+         && looksLikeFalseExecutionClaim(resp.text)){
+        falseClaimCorrections++;
+        console.warn('[agent] false-execution-claim detected — injecting correction; reply was:', String(resp.text||'').slice(0,200));
+        // Push the assistant's lie + a synthetic user reminder. Some providers
+        // disallow assistant turns with empty tool_calls in tool-loop history,
+        // so feed the correction as a fresh user turn (always safe).
+        msgs.push({role:'assistant', content: String(resp.text||'')});
+        msgs.push({role:'user', content:
+          '⚠️ You wrote that you regenerated/updated the figure, but you did NOT call any tool. '
+        + 'No new file was produced. The user is waiting for the actual updated output. '
+        + 'Call `run_script` NOW with the adjusted args to fulfil their request — do not just describe what you would do.'});
+        continue;  // re-enter loop, model gets another chance to actually act
+      }
       stopAgentStatus(status); status.remove();
       renderFinalAnswer(resp.text, allFiles, errors, trace);
       // ── Record this turn into agent memory so future turns can recall it ──
@@ -2378,7 +2929,26 @@ async function runAgentLoop(userText, filesSnap){
     appendToolMessages(msgs, resp, toolResults);
   }
   stopAgentStatus(status); status.remove();
-  appendMsg('assistant','⚠️ Agent loop hit the '+MAX_STEPS+'-step budget without finishing. If your workflow legitimately needs more rounds (many modules / datasets), raise **⚙ Settings → Agent step budget** and try again.');
+  // Budget exhausted — surface the same trace / files / errors panel as a
+  // normal final answer so users can see WHERE the loop got stuck (which
+  // tools were called, which failed, what the last few args looked like)
+  // instead of just a generic warning.
+  const lastFew = trace.slice(-5).map(t=>{
+    const a=t.args||{}; const r=t.result||{};
+    const ok = r.success !== false && (r.returncode === undefined || r.returncode === 0);
+    let argSum=''; try{
+      if(a.skill_id) argSum += a.skill_id+' ';
+      if(a.script)   argSum += a.script+' ';
+      if(Array.isArray(a.args) && a.args.length) argSum += a.args.join(' ');
+    }catch{}
+    return (ok?'✓ ':'✗ ') + t.tool + ' ' + argSum.trim().slice(0,140);
+  });
+  const summary =
+       '⚠️ **Agent loop hit the '+MAX_STEPS+'-step budget without finishing.**\n\n'
+     + 'Steps executed: '+trace.length+' · Errors: '+errors.length+' · Output files produced: '+allFiles.length+'\n\n'
+     + (lastFew.length ? 'Last '+lastFew.length+' tool call(s):\n' + lastFew.map(s=>'• '+s).join('\n') + '\n\n' : '')
+     + 'Expand **Show trace** below to see every step. If your workflow legitimately needs more rounds (many modules / datasets), raise **⚙ Settings → Agent step budget** and try again.';
+  renderFinalAnswer(summary, allFiles, errors, trace);
   return null;
 }
 
@@ -2443,7 +3013,8 @@ function updateAgentStatus(box, toolName, args, step){
     list_skill_scripts: 'Inspecting script options…',
     run_script: 'Running analysis…',
     list_files: 'Checking outputs…',
-    read_file: 'Reading file…'
+    read_file: 'Reading file…',
+    write_text_file: 'Saving data to file…'
   };
   let detail = labels[toolName] || ('Calling '+toolName+'…');
   try{
@@ -2542,7 +3113,9 @@ function renderFinalAnswer(text, files, errors, trace){
   // Build vertical content block — everything stacks top-to-bottom
   let html='';
   if(visible){
-    html += '<div class="msg-content" style="margin-bottom:10px;">'+ linkifyServerPaths(visible) +'</div>';
+    // Render markdown → HTML first, then linkify any server file paths in the result
+    const rendered = renderMarkdown(visible);
+    html += '<div class="msg-content" style="margin-bottom:10px;">'+ rendered +'</div>';
   }
 
   // Deduplicate files by url
@@ -2776,7 +3349,9 @@ const SKILL_EXAMPLES = {
   ],
   'gene-centered-analysis/depmap-analysis-for-gene': [
     '在 DepMap 里查 MYC 是哪些细胞系的依赖基因',
-    'Which cell lines are most dependent on KRAS according to DepMap?'
+    'Which cell lines are most dependent on KRAS according to DepMap?',
+    'Find genes co-expressed with TP53 in DepMap cell lines',
+    '在细胞系中找 BRCA1 的共表达基因和共依赖基因'
   ],
   'gene-centered-analysis/drug-sensitivity-for-gene': [
     '分析 BRCA1 表达与 PARP 抑制剂敏感性的相关性',
@@ -2787,8 +3362,9 @@ const SKILL_EXAMPLES = {
     'Run multivariate Cox regression on these candidate genes'
   ],
   'gene-centered-analysis/coexpression-for-gene': [
-    '找 MYC 在 TCGA-LUAD 里的共表达伙伴 top 50',
-    'Find genes co-expressed with TP53 in colorectal cancer'
+    '找 MYC 在 TCGA-LUAD 病人样本中的共表达伙伴 top 50',
+    'Find genes co-expressed with TP53 in TCGA colorectal cancer patients',
+    '在 GTEx 正常组织中找 BRCA1 的共表达基因'
   ],
 
   // Gene list
@@ -3031,8 +3607,8 @@ async function handleFileSelect(e){const files=Array.from(e.target.files);e.targ
 async function addFiles(files){
   for(const file of files){
     if(state.attachedFiles.some(f=>f.name===file.name))continue;
-    const ft=getFileType(file.name);const{preview,content,lines,truncated,binary}=await readFileContent(file);
-    const fo={id:'f'+Date.now()+Math.random().toString(36).slice(2,6),name:file.name,size:file.size,ext:file.name.split('.').pop().toLowerCase(),icon:ft.icon,label:ft.label,preview,content,lines,truncated,binary};
+    const ft=getFileType(file.name);const{preview,content,fullContent,lines,truncated,binary}=await readFileContent(file);
+    const fo={id:'f'+Date.now()+Math.random().toString(36).slice(2,6),name:file.name,size:file.size,ext:file.name.split('.').pop().toLowerCase(),icon:ft.icon,label:ft.label,preview,content,fullContent,lines,truncated,binary};
     state.attachedFiles.push(fo);addFileChip(fo);addFileToPanel(fo);
   }
   updateAttachBtn();

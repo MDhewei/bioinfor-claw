@@ -11,6 +11,9 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 from matplotlib.ticker import MaxNLocator
@@ -358,6 +361,11 @@ def main():
     parser.add_argument("--font-size", type=float, default=10.0)
     parser.add_argument("--cmap", default="viridis_r")
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     organism = normalize_organism(args.organism)
     genes = read_gene_list(args.input)

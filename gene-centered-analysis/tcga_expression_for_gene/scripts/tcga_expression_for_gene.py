@@ -7,6 +7,9 @@ import os
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import pandas as pd
 import requests
 
@@ -454,6 +457,11 @@ def main():
     )
     parser.add_argument("--outdir", required=True, help="Output directory")
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     ensure_dir(args.outdir)
 

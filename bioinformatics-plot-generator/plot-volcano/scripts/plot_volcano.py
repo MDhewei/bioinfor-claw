@@ -16,6 +16,9 @@ import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import matplotlib.patches as mpatches
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
@@ -749,6 +752,10 @@ Examples:
     parser.add_argument('--output-table', help='Save annotated table as TSV')
 
     args = parser.parse_args()
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'base_fontsize', None),
+    )
 
     # Set default for fc-cutoff-neg if not provided
     if args.fc_cutoff_neg is None:

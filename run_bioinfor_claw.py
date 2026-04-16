@@ -1255,6 +1255,7 @@ class Handler(BaseHTTPRequestHandler):
             'run_script':         self._tool_run_script,
             'list_files':         self._tool_list_files,
             'read_file':          self._tool_read_file,
+            'write_text_file':    self._tool_write_text_file,
         }
         h = handlers.get(name)
         if not h:
@@ -1674,6 +1675,43 @@ class Handler(BaseHTTPRequestHandler):
                     'url': f'/api/results/{run_id}/{fname}'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
+
+    # ── Tool: write_text_file ────────────────────────────────────────────────
+    def _tool_write_text_file(self, args):
+        """Write text content to a temp file in _uploads/ and return its server
+        path.  This is meant for the agent to save data the user pasted in
+        the chat (e.g. a gene list, a sample table, a config snippet) so it
+        can be fed as input_file to run_script.
+
+        args: {content: str, filename?: str}
+        Returns: {success, path, filename, size}
+        """
+        content = args.get('content')
+        if content is None or not isinstance(content, str) or not content.strip():
+            return {'success': False, 'error': 'content is required and must be non-empty text'}
+        fname = (args.get('filename') or 'agent_input.txt').strip()
+        # Sanitize
+        safe_name = Path(fname).name
+        if not safe_name:
+            safe_name = 'agent_input.txt'
+        # Deduplicate to avoid overwriting a previous file
+        upload_dir = self.results_dir / '_uploads'
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        stem = Path(safe_name).stem
+        suffix = Path(safe_name).suffix or '.txt'
+        fpath = upload_dir / safe_name
+        counter = 1
+        while fpath.exists():
+            fpath = upload_dir / f'{stem}_{counter}{suffix}'
+            counter += 1
+        fpath.write_text(content, encoding='utf-8')
+        print(f'  [write_text_file] Saved {fpath.name} ({len(content)} chars)')
+        return {
+            'success': True,
+            'path': str(fpath),
+            'filename': fpath.name,
+            'size': len(content),
+        }
 
     # ── Inspect a script's accepted CLI flags ────────────────────────────────
     @staticmethod

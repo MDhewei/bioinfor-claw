@@ -28,6 +28,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -634,6 +637,10 @@ def parse_args():
 
 def main():
     args = parse_args()
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)

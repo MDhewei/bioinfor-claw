@@ -40,12 +40,19 @@ Optional columns:
 
 ## Operating rule
 
-The skill is designed for reproducibility, not blind automation.
+The skill produces a **populated candidate list** directly — it does NOT
+require a human-in-the-loop fill-in step. The pipeline:
 
-- Use one or more anchor sources to define the universe.
-- Use scripted PubMed searches to gather repeatable evidence.
-- Normalize identifiers with UniProt after the candidate list is assembled.
-- Keep disputed members separate from core members.
+1. Queries UniProt (reviewed entries) for the requested category in the
+   chosen organism — this is the **primary source** of candidate rows.
+2. Queries NCBI Gene as a secondary, broader source.
+3. Merges the two on gene symbol (case-insensitive), preferring UniProt
+   metadata and back-filling from NCBI Gene.
+4. Collects PubMed bibliographic evidence (review papers etc.) into a
+   side JSONL for curator reference.
+5. Writes a fully populated `curated_candidates.csv`. Every row is tagged
+   `Inclusion tier = Candidate`. Downstream curation (manual or LLM) can
+   re-classify rows into `Core` / `Extended` / `Disputed`.
 
 ## Processing steps
 
@@ -54,28 +61,27 @@ The skill is designed for reproducibility, not blind automation.
    - Inclusion rule: `canonical`, `high-confidence curated`, or `broad`.
    - Boundaries: decide whether to include indirect regulators, cofactors, paralogs, or inferred members.
 
-2. Find anchor sources.
-   - Prefer a census paper, authoritative review, or official pathway/gene-family resource.
-   - Use the anchor source to generate the first candidate list.
+2. Run the discovery pipeline.
+   - `scripts/run_gene_list_pipeline.py` queries UniProt + NCBI Gene + PubMed in one pass.
+   - The output `curated_candidates.csv` is **already populated** with all
+     candidates from both databases.
+   - If you want to widen the search, pass `--include-unreviewed` to add
+     UniProt TrEMBL entries (noisier, more hits).
 
-3. Run standardized literature search.
-   - Use `script/run_gene_list_pipeline.py` to generate repeatable PubMed queries and store results.
-   - Review the resulting JSONL file before final curation.
+3. Review and re-classify.
+   - Open `curated_candidates.csv` and re-tag the `Inclusion tier` column
+     for each row: `Core` / `Extended` / `Disputed`.
+   - Use the side files for evidence: `uniprot_hits.jsonl`,
+     `ncbi_gene_hits.jsonl`, `pubmed_summaries.jsonl`.
 
-4. Build candidate list.
-   - Extract gene symbols from the anchor source.
-   - Expand only when justified by family-level or pathway-step evidence.
-
-5. Resolve ambiguous members.
-   - Run targeted searches:
-     - `GENE + category + PMID`
-     - `GENE + role in pathway`
-     - `GENE + domain annotation + UniProt`
+4. (Optional) Resolve ambiguous members.
+   - Open `pubmed_summaries.jsonl` to see which review papers covered the field.
+   - For borderline rows, run targeted PubMed lookups by gene symbol.
    - Move unresolved entries to `Extended` or `Disputed`.
 
-6. Normalize identifiers.
-   - Use `script/normalize_with_uniprot.py` on the curated CSV.
-   - Prefer canonical reviewed entries for the chosen organism.
+5. (Already done by step 2, but if you imported a CSV from elsewhere)
+   - Use `scripts/normalize_with_uniprot.py` to add UniProt accessions
+     to a CSV that doesn't have them.
 
 7. Annotate roles.
    - Use short, comparable labels:
@@ -176,10 +182,38 @@ Use the scripts in `./script`:
 Typical flow:
 
 ```bash
-python3 script/run_gene_list_pipeline.py --category "transcription factors" --organism "Homo sapiens" --email "you@example.com" --output-dir ./out
-python3 script/normalize_with_uniprot.py --input ./out/curated_candidates.csv --organism-id 9606 --output ./out/curated_candidates_normalized.csv
-python3 script/build_gene_list_workbook.py --input ./out/curated_candidates_normalized.csv --output ./out/gene_list.xlsx
+# One-shot discovery — produces a populated curated_candidates.csv
+python3 scripts/run_gene_list_pipeline.py \
+    --category "DNA methylation readers" \
+    --organism "Homo sapiens" \
+    --email "you@example.com" \
+    --output-dir ./out
+
+# Optional: add/refresh UniProt accessions on an existing CSV
+python3 scripts/normalize_with_uniprot.py \
+    --input ./out/curated_candidates.csv \
+    --organism-id 9606 \
+    --output ./out/curated_candidates_normalized.csv
+
+# Export to Excel workbook
+python3 scripts/build_gene_list_workbook.py \
+    --input ./out/curated_candidates_normalized.csv \
+    --output ./out/gene_list.xlsx
 ```
+
+### Tips for getting good results
+
+| Symptom | Try |
+|---|---|
+| Zero candidates returned | Broaden the category — e.g. `"methyl-CpG binding"` instead of `"DNA methylation readers"` |
+| Too few candidates (< 10) | Add `--include-unreviewed` to widen UniProt to TrEMBL |
+| Too many candidates (> 500) | Use a more specific category, or filter the CSV downstream |
+| Non-human organism | Pass canonical scientific name, e.g. `--organism "Mus musculus"` |
+| NCBI rate-limited | Increase `--delay-seconds` (default 0.4 → try 1.0) |
+| Want only databases, no PubMed | Pass `--skip-pubmed` for ~10× speedup |
+
+Exit code 2 means zero candidates were found — check the diagnostic
+message printed to stderr for the most likely cause.
 
 ## References
 

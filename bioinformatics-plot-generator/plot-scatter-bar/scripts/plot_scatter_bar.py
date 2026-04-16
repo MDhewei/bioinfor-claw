@@ -14,6 +14,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import matplotlib.patches as mpatches
 from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.patches import FancyBboxPatch
@@ -894,6 +897,10 @@ def main():
     parser.add_argument('--grid-alpha', type=float, default=0.3, help='Grid transparency')
 
     args = parser.parse_args()
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'base_fontsize', None),
+    )
 
     # Load data
     try:

@@ -29,17 +29,40 @@ Do not use this skill when:
 ## Input/Output Specification
 
 ### Input
-**Required:**
-- TSV or CSV data file with at least 2 columns
-- One numeric column containing values to plot
-- One categorical column containing group assignments
+Two input layouts are supported; pick whichever matches your data:
+
+**LONG format** (`--value-col` + `--group-col`):
+- One numeric column for values, one categorical column for group labels.
+- Example:
+  ```
+  sample    treatment   expression
+  S1        Control     2.3
+  S2        Control     2.1
+  S3        TreatA      5.2
+  ```
+
+**WIDE format** (`--wide-cols`):
+- Each column is a group; each row is one observation.
+- Use when your data already has scores laid out as side-by-side columns
+  (e.g. `Control / TreatA / TreatB` columns with numbers in the rows).
+- Example:
+  ```
+  Control   TreatA   TreatB
+  2.3       5.2      6.1
+  2.1       5.8      NaN
+  2.7       4.9      5.4
+  ```
+- Pass `--wide-cols "Control,TreatA,TreatB"` to select specific columns,
+  or `--wide-cols auto` to use every numeric column in the file.
+- If neither `--value-col`/`--group-col` nor `--wide-cols` is given, the
+  script auto-detects wide format when it sees 2+ numeric columns.
+- Sample sizes can differ between groups — NaN cells are dropped per column.
 
 **Format:**
 ```
 Column format: Any format readable by pandas.read_csv()
   - TSV: tab-separated (auto-detected by .tsv extension)
   - CSV: comma-separated
-Rows: One observation per row
 Values: Missing data (NaN/empty) automatically excluded
 ```
 
@@ -177,7 +200,41 @@ python scripts/plot_box_violin.py \
 
 ---
 
-### Example 6: Customized for Journal Submission
+### Example 6: Wide-Format Data (Each Column = One Group)
+
+```bash
+# Auto-detect: every numeric column becomes a group
+python scripts/plot_box_violin.py \
+  --input scores_wide.csv \
+  --output wide_auto.png \
+  --plot-type violin \
+  --show-points \
+  --stats all_pairs
+
+# Explicit: pick which columns to compare
+python scripts/plot_box_violin.py \
+  --input scores_wide.csv \
+  --wide-cols "Control,TreatA,TreatB" \
+  --output wide_explicit.png \
+  --plot-type raincloud \
+  --stats vs_first \
+  --ylabel "Score" \
+  --output-stats wide_stats.tsv
+```
+
+**Data format (scores_wide.csv):**
+```
+Control,TreatA,TreatB
+2.3,5.2,6.1
+2.1,5.8,
+2.7,4.9,5.4
+```
+
+**Produces:** Comparison across columns without manual reshaping. NaN cells are dropped per column, so groups can have different sample sizes.
+
+---
+
+### Example 7: Customized for Journal Submission
 
 ```bash
 python scripts/plot_box_violin.py \
@@ -213,6 +270,7 @@ python scripts/plot_box_violin.py \
 
 | Goal | Key Parameters | Example |
 |------|---|---|
+| **Wide-format data (score columns)** | `--wide-cols auto` or `--wide-cols "A,B,C"` | When each column is a group |
 | **Basic comparison (2 groups)** | `--plot-type box` `--stats auto` | `--plot-type box --stats auto` |
 | **Show distribution shape** | `--plot-type violin` | `--plot-type violin --violin-inner quartile` |
 | **Overlay data points** | `--show-points --point-style` | `--show-points --point-style jitter --point-alpha 0.6` |
@@ -386,6 +444,8 @@ python scripts/plot_box_violin.py \
 | Issue | Solution |
 |-------|----------|
 | "Column not found" | Check column names in CSV header match exactly (case-sensitive) |
+| Wide CSV but only one group plotted | Pass `--wide-cols "col1,col2,..."` explicitly, or use `--wide-cols auto` to use every numeric column |
+| Mixing wide + long flags errors out | Use either `--wide-cols` OR `--value-col`/`--group-col`, not both |
 | NaN values causing issues | Script automatically removes rows with missing data; check input file for errors |
 | Points overlap too much | Increase --jitter amount (e.g., 0.15) or use --point-alpha < 0.5 |
 | Legend/labels cut off | Increase --fig-width or --fig-height; use tight_layout (automatic) |

@@ -20,6 +20,9 @@ from typing import Dict, List, Tuple, Optional
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 import matplotlib.patches as mpatches
 
 
@@ -498,6 +501,11 @@ def main():
                        help="Output directory")
 
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     # Create output directory
     os.makedirs(args.outdir, exist_ok=True)

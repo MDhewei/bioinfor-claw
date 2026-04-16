@@ -9,6 +9,9 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
+from plot_style import init_style
 try:
     from scipy import stats as _scipy_stats
     _HAVE_SCIPY = True
@@ -714,6 +717,11 @@ def main():
     parser.add_argument('--outdir', required=True, help='Output directory')
 
     args = parser.parse_args()
+
+    init_style(
+        font_family=getattr(args, 'font_family', None),
+        font_size=getattr(args, 'font_size', None),
+    )
 
     os.makedirs(args.outdir, exist_ok=True)
 
