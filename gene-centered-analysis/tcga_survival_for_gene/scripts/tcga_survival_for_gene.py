@@ -17,8 +17,11 @@ from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 import sys as _sys, os as _os
-_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
-from plot_style import init_style
+try:
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), *(['..'] * 3), '_shared'))
+    from plot_style import init_style
+except ImportError:
+    def init_style(**kw): pass  # graceful fallback if _shared not available
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -100,27 +103,40 @@ class GDCClient:
 
         Returns a DataFrame with columns:
           case_id, submitter_id, vital_status, days_to_death,
-          days_to_last_follow_up, days_to_recurrence, progression_or_recurrence
+          days_to_last_follow_up, days_to_recurrence, progression_or_recurrence,
+          days_to_new_tumor_event, new_tumor_event_type
         """
         # NOTE: In the modern GDC schema, `vital_status` and `days_to_death`
         # live under the `demographic` node, NOT `diagnoses`. We request both
         # locations and prefer `demographic` first, falling back to
         # `diagnoses` for older records / schema variants.
+        #
+        # For DFS/PFI: recurrence data lives under `diagnoses.treatments`
+        # and `follow_ups` (new_tumor_event fields), NOT under
+        # `diagnoses.days_to_recurrence` which is almost always NULL.
         payload = {
             "filters": {
                 "op": "=",
                 "content": {"field": "project.project_id", "value": project_id},
             },
-            "fields": (
-                "case_id,submitter_id,"
-                "demographic.vital_status,"
-                "demographic.days_to_death,"
-                "diagnoses.vital_status,"
-                "diagnoses.days_to_death,"
-                "diagnoses.days_to_last_follow_up,"
-                "diagnoses.days_to_recurrence,"
-                "diagnoses.progression_or_recurrence"
-            ),
+            "fields": ",".join([
+                "case_id",
+                "submitter_id",
+                "demographic.vital_status",
+                "demographic.days_to_death",
+                "diagnoses.vital_status",
+                "diagnoses.days_to_death",
+                "diagnoses.days_to_last_follow_up",
+                "diagnoses.days_to_recurrence",
+                "diagnoses.progression_or_recurrence",
+                # Follow-up / new tumor event fields for DFS
+                "diagnoses.treatments.days_to_treatment_start",
+                "diagnoses.treatments.treatment_or_therapy",
+                "follow_ups.days_to_follow_up",
+                "follow_ups.progression_or_recurrence",
+                "follow_ups.disease_response",
+                "follow_ups.molecular_tests.days_to_molecular_test",
+            ]),
             "format": "JSON",
             "size": 10000,
         }
@@ -147,6 +163,41 @@ class GDCClient:
             d = diags[0] if diags else {}
             vital = _first(demo.get("vital_status"), d.get("vital_status"))
             d_death = _first(demo.get("days_to_death"), d.get("days_to_death"))
+
+            # --- Extract new tumor / recurrence event from follow_ups ---
+            follow_ups = h.get("follow_ups") or []
+            days_to_new_tumor = None
+            new_tumor_type = None
+            fu_progression = None
+
+            for fu in follow_ups:
+                # Check follow_up-level progression_or_recurrence
+                fu_prog = str(fu.get("progression_or_recurrence") or "").strip().lower()
+                fu_response = str(fu.get("disease_response") or "").strip().lower()
+                fu_days = safe_float(fu.get("days_to_follow_up"))
+
+                is_progression = (
+                    fu_prog in ("yes", "yes, progression", "yes, recurrence")
+                    or "progressive" in fu_response
+                    or "recurrence" in fu_response
+                )
+
+                if is_progression and fu_days is not None:
+                    if days_to_new_tumor is None or fu_days < days_to_new_tumor:
+                        days_to_new_tumor = fu_days
+                        new_tumor_type = fu_prog or fu_response or "yes"
+                        fu_progression = "yes"
+
+            # Also check diagnoses-level recurrence as fallback
+            diag_recurrence = safe_float(d.get("days_to_recurrence"))
+            diag_prog = d.get("progression_or_recurrence")
+            if diag_recurrence is not None and (
+                days_to_new_tumor is None or diag_recurrence < days_to_new_tumor
+            ):
+                days_to_new_tumor = diag_recurrence
+                new_tumor_type = "recurrence"
+                fu_progression = diag_prog or "yes"
+
             rows.append(
                 {
                     "case_id": case_id,
@@ -155,7 +206,9 @@ class GDCClient:
                     "days_to_death": safe_float(d_death),
                     "days_to_last_follow_up": safe_float(d.get("days_to_last_follow_up")),
                     "days_to_recurrence": safe_float(d.get("days_to_recurrence")),
-                    "progression_or_recurrence": d.get("progression_or_recurrence"),
+                    "progression_or_recurrence": fu_progression or diag_prog,
+                    "days_to_new_tumor_event": days_to_new_tumor,
+                    "new_tumor_event_type": new_tumor_type,
                 }
             )
 
@@ -236,9 +289,16 @@ def build_dfs_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add DFS_time and DFS_event columns.
 
-    DFS_event : 1 = recurrence/progression/death observed, 0 = censored
-    DFS_time  : earliest of days_to_recurrence or days_to_death;
-                falls back to days_to_last_follow_up when censored
+    DFS (Disease-Free Survival) / PFI (Progression-Free Interval):
+      DFS_event : 1 = recurrence/progression/death observed, 0 = censored
+      DFS_time  : earliest of days_to_new_tumor_event, days_to_recurrence,
+                  or days_to_death; falls back to days_to_last_follow_up
+                  when censored.
+
+    Uses new_tumor_event data from GDC follow_ups (primary) and
+    diagnoses.days_to_recurrence (fallback). This produces DFS curves
+    that differ from OS because recurrence/progression events are
+    captured independently of death.
     """
     out = df.copy()
     events, times = [], []
@@ -246,28 +306,42 @@ def build_dfs_columns(df: pd.DataFrame) -> pd.DataFrame:
         vs = str(row.get("vital_status") or "").lower()
         prog = str(row.get("progression_or_recurrence") or "").lower()
 
-        has_event = (prog == "yes") or (vs == "dead")
+        # Collect candidate event times from all available sources
+        d_new_tumor = row.get("days_to_new_tumor_event")
+        d_recurrence = row.get("days_to_recurrence")
+        d_death = row.get("days_to_death")
+        d_follow_up = row.get("days_to_last_follow_up")
+
+        # Determine if a DFS event occurred
+        has_recurrence = (
+            prog in ("yes", "yes, progression", "yes, recurrence")
+            or (d_new_tumor is not None and pd.notna(d_new_tumor))
+            or (d_recurrence is not None and pd.notna(d_recurrence))
+        )
+        is_dead = (vs == "dead")
+        has_event = has_recurrence or is_dead
+
         if has_event:
+            # Collect all valid event times
             candidate_times = [
-                t for t in [row.get("days_to_recurrence"), row.get("days_to_death")]
-                if t is not None
+                t for t in [d_new_tumor, d_recurrence, d_death]
+                if t is not None and pd.notna(t)
             ]
             if candidate_times:
                 events.append(1)
-                times.append(min(candidate_times))
+                times.append(min(candidate_times))  # earliest event
+            elif d_follow_up is not None and pd.notna(d_follow_up):
+                # Event known but no time → use follow-up as approximation
+                events.append(1)
+                times.append(d_follow_up)
             else:
-                t = row.get("days_to_last_follow_up")
-                if t is not None:
-                    events.append(1)
-                    times.append(t)
-                else:
-                    events.append(None)
-                    times.append(None)
+                events.append(None)
+                times.append(None)
         else:
-            t = row.get("days_to_last_follow_up")
-            if t is not None:
+            # Censored: no recurrence and alive
+            if d_follow_up is not None and pd.notna(d_follow_up):
                 events.append(0)
-                times.append(t)
+                times.append(d_follow_up)
             else:
                 events.append(None)
                 times.append(None)
@@ -557,6 +631,19 @@ def main():
     merged = build_os_columns(merged)
     merged = build_dfs_columns(merged)
 
+    # Diagnostic: report DFS data availability
+    n_with_new_tumor = int(merged["days_to_new_tumor_event"].notna().sum()) if "days_to_new_tumor_event" in merged.columns else 0
+    n_with_recurrence = int(merged["days_to_recurrence"].notna().sum()) if "days_to_recurrence" in merged.columns else 0
+    n_dfs_events = int((merged["DFS_event"] == 1).sum()) if "DFS_event" in merged.columns else 0
+    n_os_events = int((merged["OS_event"] == 1).sum()) if "OS_event" in merged.columns else 0
+    n_dfs_differs = 0
+    if "DFS_time" in merged.columns and "OS_time" in merged.columns:
+        both_valid = merged[["DFS_time", "OS_time"]].dropna()
+        n_dfs_differs = int((both_valid["DFS_time"] != both_valid["OS_time"]).sum())
+    print(f"[INFO] Recurrence data: {n_with_new_tumor} from follow_ups, {n_with_recurrence} from diagnoses")
+    print(f"[INFO] OS events: {n_os_events}, DFS events: {n_dfs_events}")
+    print(f"[INFO] Cases where DFS_time ≠ OS_time: {n_dfs_differs}")
+
     # Stratify
     merged = stratify_expression(merged, args.stratify, args.custom_cutoff)
     cutoff_method = merged.attrs.get("cutoff_method", args.stratify)
@@ -567,6 +654,7 @@ def main():
         "case_id", "submitter_id", "vital_status",
         "days_to_death", "days_to_last_follow_up",
         "days_to_recurrence", "progression_or_recurrence",
+        "days_to_new_tumor_event", "new_tumor_event_type",
         "expression", "expression_group",
         "OS_time", "OS_event",
         "DFS_time", "DFS_event",

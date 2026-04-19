@@ -124,13 +124,22 @@ For each requested category, generate:
    Example:
    - `<output_prefix>.GO_BP.bubble.pdf`
 
+## Enrichment backends
+
+The script supports two enrichment backends:
+
+1. **g:Profiler (primary, default)** — Uses official GO consortium annotations via the g:Profiler REST API (`biit.cs.ut.ee`). Automatically maps gene aliases/outdated symbols. Generally gives more comprehensive results matching what online GO tools produce.
+2. **Enrichr (fallback)** — Uses Enrichr curated libraries via `gseapy`. Falls back to this if g:Profiler is unreachable.
+
+Control with `--backend auto|gprofiler|enrichr` (default: `auto` = try g:Profiler first).
+
 ## Assumptions
 
 This skill assumes:
 - the input is an unranked gene list
-- gene symbols are already reasonably clean
+- gene symbols are already reasonably clean (g:Profiler will handle alias mapping)
 - the user wants over-representation analysis
-- enrichment is performed against Enrichr-supported libraries through `gseapy`
+- enrichment uses g:Profiler (primary) or Enrichr (fallback)
 - adjusted p-value is the main significance metric for ranking and plotting
 
 If the user does not specify otherwise, use:
@@ -208,6 +217,7 @@ Required:
 Optional:
 - `--organism <human|mouse|hs|hsapiens|homo sapiens|mm|mus musculus|mouse>`
 - `--library <GO_BP|GO_MF|GO_CC|GO|KEGG|REACTOME|ALL>`
+- `--backend <auto|gprofiler|enrichr>` (default: auto)
 - `--top-n <int>`
 - `--sig-cutoff <float>`
 - `--fig-width <float>`
@@ -287,7 +297,9 @@ Expected packages include:
 - `pandas`
 - `numpy`
 - `matplotlib`
-- `gseapy`
+- `gseapy` (optional, needed for Enrichr fallback)
+
+No extra packages needed for g:Profiler — it uses Python's built-in `urllib`.
 
 ## Failure modes
 

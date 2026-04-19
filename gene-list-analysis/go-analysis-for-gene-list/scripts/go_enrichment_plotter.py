@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 
 import argparse
+import csv
+import json
 import os
 import re
 import sys
 import textwrap
+import urllib.request
+import urllib.error
+import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -12,12 +17,19 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import sys as _sys, os as _os
-_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
-from plot_style import init_style
+try:
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), *(['..'] * 3), '_shared'))
+    from plot_style import init_style
+except ImportError:
+    def init_style(**kw): pass  # graceful fallback if _shared not available
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 from matplotlib.ticker import MaxNLocator
-import gseapy as gp
+
+try:
+    import gseapy as gp
+except ImportError:
+    gp = None  # g:Profiler is used as primary; gseapy/Enrichr as fallback
 
 
 LIBRARY_MAP: Dict[str, Dict[str, str]] = {
@@ -42,6 +54,22 @@ LIBRARY_MAP: Dict[str, Dict[str, str]] = {
         "mouse": "Reactome_2022",
     },
 }
+
+# g:Profiler source names (maps our category names → g:Profiler source IDs)
+GPROFILER_SOURCE_MAP: Dict[str, str] = {
+    "GO_BP": "GO:BP",
+    "GO_MF": "GO:MF",
+    "GO_CC": "GO:CC",
+    "KEGG": "KEGG",
+    "REACTOME": "REAC",
+}
+
+GPROFILER_ORGANISM_MAP: Dict[str, str] = {
+    "human": "hsapiens",
+    "mouse": "mmusculus",
+}
+
+GPROFILER_API = "https://biit.cs.ut.ee/gprofiler/api/gost/profile/"
 
 
 ORGANISM_MAP: Dict[str, str] = {
@@ -145,6 +173,10 @@ def clean_enrichr_results(df: pd.DataFrame) -> pd.DataFrame:
         ascending=[True, False, False, True],
     ).reset_index(drop=True)
 
+    # Drop Enrichr-specific columns that are not meaningful for g:Profiler
+    drop_cols = {"Old P-value", "Old Adjusted P-value", "Odds Ratio", "Combined Score"}
+    dat = dat.drop(columns=[c for c in drop_cols if c in dat.columns])
+
     return dat
 
 
@@ -156,7 +188,137 @@ def resolve_library(category: str, organism: str) -> str:
     return LIBRARY_MAP[category][organism]
 
 
+def _gprofiler_df_to_enrichr_format(result_df: pd.DataFrame,
+                                      gp_source: str) -> pd.DataFrame:
+    """Convert a gprofiler-official result DataFrame to our enrichr-like format."""
+    rows = []
+    for _, r in result_df.iterrows():
+        term_name = str(r.get("name", ""))
+        term_id = str(r.get("native", ""))
+        p_value = float(r.get("p_value", 1.0))
+        intersection_size = int(r.get("intersection_size", 0))
+        term_size = int(r.get("term_size", 1))
+
+        # Build display term (include GO ID for GO terms)
+        if term_id.startswith("GO:"):
+            display = f"{term_name} ({term_id})"
+        else:
+            display = term_name
+
+        # Get intersection genes if available
+        intersections = r.get("intersections", [])
+        if isinstance(intersections, list):
+            # Filter out empty strings / None
+            gene_list = [str(g) for g in intersections if g and str(g).strip()]
+            gene_str = ";".join(gene_list)
+        else:
+            gene_str = str(intersections) if pd.notna(intersections) else ""
+
+        rows.append({
+            "Gene_set": f"g:Profiler_{gp_source}",
+            "Term": display,
+            "Overlap": f"{intersection_size}/{term_size}",
+            "P-value": p_value,
+            "Adjusted P-value": p_value,  # g:Profiler returns already-corrected p-values
+            "Genes": gene_str,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+    return clean_enrichr_results(pd.DataFrame(rows))
+
+
+def run_gprofiler(genes: List[str], category: str, organism: str,
+                   sig_cutoff: float = 0.05) -> pd.DataFrame:
+    """
+    Run enrichment via g:Profiler.
+    Uses official GO consortium annotations with automatic gene symbol mapping.
+    Tries gprofiler-official package first, then raw REST API fallback.
+    Returns DataFrame in the same format as clean_enrichr_results().
+    """
+    gp_organism = GPROFILER_ORGANISM_MAP.get(organism)
+    gp_source = GPROFILER_SOURCE_MAP.get(category)
+    if not gp_organism or not gp_source:
+        raise ValueError(f"g:Profiler does not support organism={organism} or category={category}")
+
+    # ── Method 1: gprofiler-official package (most reliable) ──────────
+    try:
+        from gprofiler import GProfiler
+        print(f"[INFO] Using gprofiler-official package")
+        gp_inst = GProfiler(return_dataframe=True)
+        result_df = gp_inst.profile(
+            organism=gp_organism,
+            query=genes,
+            sources=[gp_source],
+            user_threshold=sig_cutoff,
+            significance_threshold_method="fdr",
+            no_evidences=False,  # include intersecting gene names
+        )
+
+        if result_df is None or len(result_df) == 0:
+            print(f"[INFO] g:Profiler returned 0 results")
+            return pd.DataFrame()
+
+        print(f"[INFO] g:Profiler returned {len(result_df)} terms")
+        print(f"[DEBUG] Result columns: {list(result_df.columns)}")
+        if len(result_df) > 0:
+            top = result_df.iloc[0]
+            print(f"[DEBUG] Top term: {top.get('name', '?')} "
+                  f"p_value={top.get('p_value', '?')} "
+                  f"intersection_size={top.get('intersection_size', '?')} "
+                  f"term_size={top.get('term_size', '?')}")
+
+        return _gprofiler_df_to_enrichr_format(result_df, gp_source)
+
+    except ImportError:
+        print(f"[INFO] gprofiler-official not installed; trying REST API…")
+    except Exception as e:
+        print(f"[WARN] gprofiler-official failed: {e}; trying REST API…")
+
+    # ── Method 2: Raw REST API fallback ───────────────────────────────
+    body = {
+        "organism": gp_organism,
+        "query": genes,
+        "sources": [gp_source],
+        "user_threshold": sig_cutoff,
+        "significance_threshold_method": "fdr",
+        "no_evidences": False,
+    }
+
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        GPROFILER_API, data=data, method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json"})
+
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        raw = json.loads(resp.read().decode())
+
+    gp_results = raw.get("result", [])
+    if not gp_results:
+        print(f"[INFO] g:Profiler REST API returned 0 results")
+        return pd.DataFrame()
+
+    # Debug: dump first result's keys and a few field values
+    first = gp_results[0]
+    if isinstance(first, dict):
+        print(f"[DEBUG] REST API result keys: {sorted(first.keys())}")
+        print(f"[DEBUG] First result sample: name={first.get('name')}, "
+              f"p_value={first.get('p_value')}, "
+              f"intersection_size={first.get('intersection_size')}, "
+              f"term_size={first.get('term_size')}")
+    else:
+        print(f"[DEBUG] REST API result type: {type(first).__name__}, value: {first!r:.200s}")
+        raise ValueError(f"Unexpected g:Profiler response format: results are {type(first).__name__}, not dict")
+
+    # Convert list of dicts → DataFrame
+    result_df = pd.DataFrame(gp_results)
+    print(f"[INFO] g:Profiler REST API returned {len(result_df)} terms")
+    return _gprofiler_df_to_enrichr_format(result_df, gp_source)
+
+
 def run_enrichr(genes: List[str], gene_set: str, organism: str) -> pd.DataFrame:
+    if gp is None:
+        raise ImportError("gseapy is not installed; cannot use Enrichr backend")
     enr = gp.enrichr(
         gene_list=genes,
         gene_sets=gene_set,
@@ -217,12 +379,16 @@ def make_bubble_plot(
     min_bubble: float = 80.0,
     max_bubble: float = 650.0,
 ):
+    """Plot already-selected terms as a bubble plot. df should be pre-filtered."""
     if len(df) == 0:
         raise ValueError("No enrichment results available for plotting")
 
-    dat = choose_terms_for_plot(df, top_n=top_n, sig_cutoff=sig_cutoff)
+    dat = df.copy()
     if len(dat) == 0:
         raise ValueError("No enrichment terms available after filtering")
+
+    # Check how many terms pass significance threshold
+    n_sig = int((dat["Adjusted P-value"] <= sig_cutoff).sum())
 
     publication_style(font_family=font_family, font_size=font_size)
 
@@ -241,9 +407,12 @@ def make_bubble_plot(
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
+    # Anchor color scale: vmin=0, vmax extends to at least -log10(sig_cutoff)
+    sig_line = -np.log10(sig_cutoff)  # e.g. 1.3 for 0.05
+    data_max = float(dat["minus_log10_fdr"].max())
     norm = Normalize(
-        vmin=float(dat["minus_log10_fdr"].min()),
-        vmax=float(dat["minus_log10_fdr"].max()),
+        vmin=0.0,
+        vmax=max(data_max * 1.05, sig_line * 1.3),
     )
 
     sc = ax.scatter(
@@ -262,12 +431,28 @@ def make_bubble_plot(
     ax.set_yticks(y_pos)
     ax.set_yticklabels(dat["Term_wrapped"])
     ax.set_xlabel("Gene Ratio")
-    ax.set_title(title)
+
+    # Add subtitle annotation when nothing is significant
+    if n_sig == 0:
+        ax.set_title(f"{title}\n(none significant at FDR ≤ {sig_cutoff})",
+                      fontsize=font_size + 2)
+    else:
+        ax.set_title(title)
+
     ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
     ax.grid(axis="x", linestyle="--", alpha=0.3, zorder=1)
 
     cbar = fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.88)
     cbar.set_label("-log10(FDR)")
+
+    # Draw significance threshold line on colorbar
+    if 0 < sig_line < norm.vmax:
+        cbar.ax.axhline(y=sig_line, color="red", linewidth=1.0, linestyle="--")
+        cbar.ax.text(
+            1.05, sig_line, f" FDR={sig_cutoff}",
+            transform=cbar.ax.get_yaxis_transform(),
+            va="center", ha="left", fontsize=font_size - 1.5, color="red",
+        )
 
     unique_sizes = sorted(dat["Hit_Count"].dropna().astype(int).unique())
     if len(unique_sizes) > 0:
@@ -320,13 +505,12 @@ def make_summary_plot_table(df: pd.DataFrame, output: str) -> None:
         "Hit_Count",
         "Bg_Count",
         "Gene_Ratio",
-        "Combined Score",
         "Genes",
     ]
     existing = [c for c in cols if c in out.columns]
     out = out[existing].copy()
     ensure_parent_dir(output)
-    out.to_csv(output, sep="\t", index=False)
+    out.to_csv(output, sep="\t", index=False, quoting=csv.QUOTE_NONNUMERIC)
 
 
 def parse_panel(panel: str) -> List[str]:
@@ -360,6 +544,10 @@ def main():
     parser.add_argument("--font-family", default="Arial")
     parser.add_argument("--font-size", type=float, default=10.0)
     parser.add_argument("--cmap", default="viridis_r")
+    parser.add_argument("--backend", default="auto",
+                        choices=["auto", "gprofiler", "enrichr"],
+                        help="Enrichment backend: auto (g:Profiler first, Enrichr fallback), "
+                             "gprofiler, or enrichr")
     args = parser.parse_args()
 
     init_style(
@@ -369,20 +557,41 @@ def main():
 
     organism = normalize_organism(args.organism)
     genes = read_gene_list(args.input)
+    print(f"[INFO] Loaded {len(genes)} genes from {args.input}")
     categories = parse_panel(args.library)
 
     generated_any = False
 
     for category in categories:
-        gene_set = resolve_library(category, organism)
         display_name = DISPLAY_NAME_MAP[category]
-        print(f"[INFO] Running enrichment for {display_name}: {gene_set}")
+        res = pd.DataFrame()
 
-        try:
-            res = run_enrichr(genes, gene_set, organism=organism)
-        except Exception as e:
-            print(f"[ERROR] Failed enrichment for {category}: {e}", file=sys.stderr)
-            continue
+        # Try g:Profiler first (official GO annotations, gene alias mapping)
+        if args.backend in ("auto", "gprofiler") and category in GPROFILER_SOURCE_MAP:
+            try:
+                print(f"[INFO] Running g:Profiler for {display_name} "
+                      f"(source={GPROFILER_SOURCE_MAP[category]})…")
+                res = run_gprofiler(genes, category, organism,
+                                    sig_cutoff=args.sig_cutoff)
+                if len(res) > 0:
+                    print(f"[INFO] g:Profiler returned {len(res)} terms")
+                else:
+                    print(f"[INFO] g:Profiler returned 0 terms")
+            except Exception as e:
+                print(f"[WARN] g:Profiler failed for {category}: {e}")
+                res = pd.DataFrame()
+
+        # Fallback to Enrichr if g:Profiler failed or returned nothing
+        if len(res) == 0 and args.backend in ("auto", "enrichr"):
+            gene_set = resolve_library(category, organism)
+            print(f"[INFO] Running Enrichr for {display_name}: {gene_set}")
+            try:
+                if gp is None:
+                    raise ImportError("gseapy not installed; cannot use Enrichr backend")
+                res = run_enrichr(genes, gene_set, organism=organism)
+            except Exception as e:
+                print(f"[ERROR] Enrichr failed for {category}: {e}", file=sys.stderr)
+                continue
 
         out_tsv = f"{args.output_prefix}.{category}.tsv"
         out_plot_tsv = f"{args.output_prefix}.{category}.plot_input.tsv"
@@ -394,12 +603,29 @@ def main():
             continue
 
         ensure_parent_dir(out_tsv)
-        res.to_csv(out_tsv, sep="\t", index=False)
+        # Drop internal/Enrichr-specific columns from output TSV
+        drop_cols = {"Term_wrapped", "Old P-value", "Old Adjusted P-value",
+                     "Odds Ratio", "Combined Score"}
+        save_cols = [c for c in res.columns if c not in drop_cols]
+        # Use QUOTE_NONNUMERIC to prevent Excel date-corruption of
+        # the Overlap column (e.g. "2/23" → "23-Feb")
+        res[save_cols].to_csv(out_tsv, sep="\t", index=False,
+                              quoting=csv.QUOTE_NONNUMERIC)
+
+        n_total = len(res)
+        n_sig = int((res["Adjusted P-value"] <= args.sig_cutoff).sum())
+        print(f"[INFO] {display_name}: {n_total} terms total, {n_sig} significant at FDR ≤ {args.sig_cutoff}")
+        if n_sig > 0:
+            best = res.iloc[0]
+            print(f"[INFO]   Most significant: {best['Term_clean']} (FDR={best['Adjusted P-value']:.2e})")
 
         plot_df = choose_terms_for_plot(res, top_n=args.top_n, sig_cutoff=args.sig_cutoff)
         if len(plot_df) == 0:
             print(f"[WARN] No plottable terms for {category}")
             continue
+
+        print(f"[INFO]   Plotting top {len(plot_df)} terms (FDR range: "
+              f"{plot_df['Adjusted P-value'].min():.2e} – {plot_df['Adjusted P-value'].max():.2e})")
 
         make_summary_plot_table(plot_df, out_plot_tsv)
 

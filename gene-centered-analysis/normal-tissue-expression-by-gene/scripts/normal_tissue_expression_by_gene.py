@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 
 import argparse
+import math
 import os
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import matplotlib.pyplot as plt
 import sys as _sys, os as _os
-_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
-from plot_style import init_style
+try:
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), *(['..'] * 3), '_shared'))
+    from plot_style import init_style
+except ImportError:
+    def init_style(**kw): pass  # graceful fallback if _shared not available
 import pandas as pd
 import requests
 
@@ -144,7 +149,7 @@ def _normalize_median_items(items: List[Dict[str, Any]]) -> pd.DataFrame:
         rows.append({"tissue": str(tissue), "expression": expr_value})
 
     if not rows:
-        return pd.DataFrame(columns=["tissue", "expression"])
+        return pd.DataFrame(columns=["tissue", "expression", "log2_tpm_plus1"])
 
     df = pd.DataFrame(rows)
     df = (
@@ -153,6 +158,8 @@ def _normalize_median_items(items: List[Dict[str, Any]]) -> pd.DataFrame:
         .sort_values("expression", ascending=False)
         .reset_index(drop=True)
     )
+    # Add log2(TPM+1) transform — standard for GTEx visualisation
+    df["log2_tpm_plus1"] = np.log2(df["expression"] + 1)
     return df
 
 
@@ -227,29 +234,43 @@ def classify_expression_pattern(
     universal_detect_frac_min: float = 0.80,
     universal_median_min: float = 1.0,
 ) -> str:
+    """Classify expression pattern using log2(TPM+1) values."""
     if df.empty:
         return "no-data"
 
-    expr = df["expression"].astype(float)
+    # Use log2(TPM+1) for classification
+    col = "log2_tpm_plus1" if "log2_tpm_plus1" in df.columns else "expression"
+    expr = df[col].astype(float)
+
+    # Convert thresholds to log2 scale if using log2 column
+    if col == "log2_tpm_plus1":
+        detect_thr = np.log2(expr_detect_threshold + 1)
+        specific_max_thr = np.log2(tissue_specific_max_threshold + 1)
+        univ_median_min = np.log2(universal_median_min + 1)
+    else:
+        detect_thr = expr_detect_threshold
+        specific_max_thr = tissue_specific_max_threshold
+        univ_median_min = universal_median_min
+
     max_expr = float(expr.max())
     median_expr = float(expr.median())
     n_total = len(expr)
-    n_detected = int((expr >= expr_detect_threshold).sum())
+    n_detected = int((expr >= detect_thr).sum())
     frac_detected = n_detected / n_total if n_total > 0 else 0.0
 
-    if max_expr < expr_detect_threshold:
+    if max_expr < detect_thr:
         return "non-expressed"
 
     fold_vs_median = max_expr / (median_expr + 1e-6)
 
     if (
-        max_expr >= tissue_specific_max_threshold
+        max_expr >= specific_max_thr
         and fold_vs_median >= tissue_specific_fold_threshold
         and frac_detected <= tissue_specific_detect_frac_max
     ):
         return "tissue-specific"
 
-    if frac_detected >= universal_detect_frac_min and median_expr >= universal_median_min:
+    if frac_detected >= universal_detect_frac_min and median_expr >= univ_median_min:
         return "universally-expressed"
 
     return "mixed"
@@ -272,20 +293,23 @@ def write_summary(
     ]
 
     if not df.empty:
-        expr = df["expression"].astype(float)
-        n_detected = int((expr >= expr_detect_threshold).sum())
+        raw_expr = df["expression"].astype(float)
+        log2_expr = df["log2_tpm_plus1"].astype(float) if "log2_tpm_plus1" in df.columns else np.log2(raw_expr + 1)
+        log2_detect_thr = np.log2(expr_detect_threshold + 1)
+        n_detected = int((log2_expr >= log2_detect_thr).sum())
         frac_detected = n_detected / len(df)
 
-        lines.append(f"Max expression: {expr.max():.4f}")
-        lines.append(f"Median expression across tissues: {expr.median():.4f}")
+        lines.append(f"Max expression: {raw_expr.max():.4f} TPM  ({log2_expr.max():.4f} log2(TPM+1))")
+        lines.append(f"Median expression across tissues: {raw_expr.median():.4f} TPM  ({log2_expr.median():.4f} log2(TPM+1))")
         lines.append(
-            f"Tissues above threshold ({expr_detect_threshold}): "
+            f"Tissues above threshold ({expr_detect_threshold} TPM): "
             f"{n_detected}/{len(df)} ({frac_detected:.2%})"
         )
         lines.append("")
-        lines.append(f"Top {min(top_n, len(df))} tissues:")
+        lines.append(f"Top {min(top_n, len(df))} tissues (sorted by expression):")
         for i, row in enumerate(df.head(top_n).itertuples(index=False), start=1):
-            lines.append(f"{i}. {row.tissue}: {row.expression:.4f}")
+            log2_val = np.log2(row.expression + 1)
+            lines.append(f"{i}. {row.tissue}: {row.expression:.4f} TPM  ({log2_val:.4f} log2(TPM+1))")
 
     with open(out_txt, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -299,12 +323,18 @@ def make_barplot(
 ) -> None:
     """
     Publication-quality horizontal barplot for all tissues.
-    Because expression is on the x-axis, the threshold is drawn as a vertical line.
+    Uses log2(TPM+1) on the x-axis (standard for GTEx visualisation).
     """
     if df.empty:
         return
 
-    plot_df = df.copy().sort_values("expression", ascending=True)
+    plot_df = df.copy()
+    # Ensure log2(TPM+1) column exists
+    if "log2_tpm_plus1" not in plot_df.columns:
+        plot_df["log2_tpm_plus1"] = np.log2(plot_df["expression"] + 1)
+    plot_df = plot_df.sort_values("log2_tpm_plus1", ascending=True)
+
+    log2_threshold = np.log2(expr_detect_threshold + 1)
 
     fig_w = 10
     fig_h = max(6, 0.28 * len(plot_df) + 1.8)
@@ -314,21 +344,21 @@ def make_barplot(
 
     ax.barh(
         plot_df["tissue"],
-        plot_df["expression"],
+        plot_df["log2_tpm_plus1"],
         edgecolor="black",
         linewidth=0.4,
     )
 
     ax.axvline(
-        x=expr_detect_threshold,
+        x=log2_threshold,
         linestyle="--",
         linewidth=1.2,
         color="red",
         alpha=0.9,
-        label=f"Detection threshold = {expr_detect_threshold:g}",
+        label=f"Detection threshold = {expr_detect_threshold:g} TPM",
     )
 
-    ax.set_xlabel("Median expression", fontsize=12)
+    ax.set_xlabel("Median expression — log2(TPM+1)", fontsize=12)
     ax.set_ylabel("Tissue", fontsize=12)
     ax.set_title(f"{gene_symbol} normal tissue expression (GTEx)", fontsize=14, pad=12)
 
@@ -426,15 +456,21 @@ def main() -> None:
         top_n=args.top_n,
         expr_detect_threshold=args.expr_detect_threshold,
     )
+    # Ensure log2 column is present for plotting
+    if "log2_tpm_plus1" not in tissue_df.columns:
+        tissue_df["log2_tpm_plus1"] = np.log2(tissue_df["expression"].astype(float) + 1)
+
     make_barplot(
-        tissue_df[["tissue", "expression"]].copy(),
+        tissue_df[["tissue", "expression", "log2_tpm_plus1"]].copy(),
         plot_path,
         gene_symbol=resolved_gene_symbol,
         expr_detect_threshold=args.expr_detect_threshold,
     )
 
     expr = tissue_df["expression"].astype(float)
-    n_detected = int((expr >= args.expr_detect_threshold).sum())
+    log2_expr = tissue_df["log2_tpm_plus1"].astype(float)
+    log2_detect_thr = np.log2(args.expr_detect_threshold + 1)
+    n_detected = int((log2_expr >= log2_detect_thr).sum())
     frac_detected = n_detected / len(tissue_df) if len(tissue_df) > 0 else 0.0
 
     summary_df = pd.DataFrame(
@@ -444,8 +480,10 @@ def main() -> None:
                 "resolved_gene_symbol": resolved_gene_symbol,
                 "gencode_id": gencode_id,
                 "expression_category": expression_category,
-                "max_expression": float(expr.max()) if len(expr) else None,
-                "median_expression_across_tissues": float(expr.median()) if len(expr) else None,
+                "max_expression_TPM": float(expr.max()) if len(expr) else None,
+                "max_expression_log2_TPM_plus1": float(log2_expr.max()) if len(log2_expr) else None,
+                "median_expression_TPM": float(expr.median()) if len(expr) else None,
+                "median_expression_log2_TPM_plus1": float(log2_expr.median()) if len(log2_expr) else None,
                 "num_tissues": int(len(tissue_df)),
                 "num_detected_tissues": n_detected,
                 "fraction_detected_tissues": frac_detected,

@@ -26,6 +26,12 @@ Bioinfor-Claw is two things in one project:
 
 This dual nature is intentional. Use Bioinfor-Claw on its own as a "desktop AI bench scientist," embed it inside a larger agent platform you already run, or call individual skills directly from your scripts and pipelines — the same skills work in all three modes.
 
+<p align="center">
+  <img src="demo.gif" alt="Bioinfor-Claw Demo" width="800">
+  <br>
+  <em>One prompt → automatic skill selection → real analysis → publication-ready results</em>
+</p>
+
 ---
 
 ## Table of contents

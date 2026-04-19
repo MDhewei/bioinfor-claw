@@ -1483,6 +1483,43 @@ class Handler(BaseHTTPRequestHandler):
             return {'success': False, 'error': 'args must be a list of strings'}
         cli_args = [str(a) for a in cli_args]
 
+        # ── Auto-redirect to standalone scripts for co-expression/co-essentiality ──
+        if 'depmap-analysis-for-gene' in skill_id:
+            _has_coexpr_module = False
+            _has_coess_module = False
+            for idx, a in enumerate(cli_args):
+                if a == '--modules' and idx + 1 < len(cli_args):
+                    mods = cli_args[idx + 1].lower()
+                    if 'coexpression' in mods and 'coessentiality' not in mods:
+                        _has_coexpr_module = True
+                    elif 'coessentiality' in mods:
+                        _has_coess_module = True
+            if _has_coexpr_module and 'coexpression' not in script_path.stem:
+                alt = skill_dir / 'scripts' / 'depmap_coexpression.py'
+                if alt.exists():
+                    print(f"  [tool/run_script] ↗ Redirecting --modules coexpression → standalone depmap_coexpression.py")
+                    script_path = alt
+                    # Remove --modules from cli_args
+                    new_args = []
+                    skip = False
+                    for a in cli_args:
+                        if skip: skip = False; continue
+                        if a == '--modules': skip = True; continue
+                        new_args.append(a)
+                    cli_args = new_args
+            elif _has_coess_module and 'coessentiality' not in script_path.stem:
+                alt = skill_dir / 'scripts' / 'depmap_coessentiality.py'
+                if alt.exists():
+                    print(f"  [tool/run_script] ↗ Redirecting --modules coessentiality → standalone depmap_coessentiality.py")
+                    script_path = alt
+                    new_args = []
+                    skip = False
+                    for a in cli_args:
+                        if skip: skip = False; continue
+                        if a == '--modules': skip = True; continue
+                        new_args.append(a)
+                    cli_args = new_args
+
         # Unique run dir for outputs
         run_id = datetime.now().strftime('%Y%m%d_%H%M%S_') + _uuid.uuid4().hex[:6]
         out_dir = self.results_dir / run_id
@@ -1528,6 +1565,58 @@ class Handler(BaseHTTPRequestHandler):
         elif 'output-prefix' in flags and 'output-prefix' not in provided_flags:
             auto_args += ['--output-prefix', str(out_dir / script_path.stem)]
 
+        # ── Auto-wire DepMap / preflight data files ─────────────────────────
+        # If the script needs data files (e.g. --expression-file) and the LLM
+        # didn't provide them (or gave a non-existent path), fill from cache.
+        preflight = self.SKILL_PREFLIGHT.get(skill_id)
+        if preflight:
+            file_map = preflight['data_provider']['file_map']
+            cache_dir = self.repo_root / 'web_results' / preflight['data_provider']['cache_dir']
+            for flag, pattern in file_map.items():
+                if flag not in flags:
+                    continue
+                # Check if LLM already provided a VALID path for this flag
+                llm_provided_valid = False
+                if flag in provided_flags:
+                    for idx, a in enumerate(cli_args):
+                        if a == f'--{flag}' and idx + 1 < len(cli_args):
+                            if Path(cli_args[idx + 1]).exists():
+                                llm_provided_valid = True
+                            break
+                if not llm_provided_valid:
+                    # Search in cache and also in recent web_results subdirs
+                    cached = self._find_cached_files(pattern, cache_dir)
+                    if not cached:
+                        # Broader search: look in web_results subdirectories
+                        import fnmatch as _fnm
+                        wr = self.repo_root / 'web_results'
+                        if wr.exists():
+                            for sub in sorted(wr.iterdir(), key=lambda d: d.name, reverse=True):
+                                if sub.is_dir() and sub.name != preflight['data_provider']['cache_dir']:
+                                    for f in sub.iterdir():
+                                        if _fnm.fnmatch(f.name, pattern):
+                                            cached = [f]
+                                            break
+                                if cached:
+                                    break
+                    if cached:
+                        # Remove invalid LLM-provided path from cli_args
+                        if flag in provided_flags:
+                            new_args = []
+                            skip = False
+                            for a in cli_args:
+                                if skip:
+                                    skip = False
+                                    continue
+                                if a == f'--{flag}':
+                                    skip = True
+                                    continue
+                                new_args.append(a)
+                            cli_args = new_args
+                            provided_flags.discard(flag)
+                        auto_args += [f'--{flag}', str(cached[0])]
+                        print(f"  [tool/run_script] Auto-wired --{flag} → {cached[0].name}")
+
         # Build command. Prevent "-value" from being mistaken for a flag by
         # merging with = syntax.
         cmd = [sys.executable, str(script_path)]
@@ -1558,9 +1647,11 @@ class Handler(BaseHTTPRequestHandler):
         print(f"  [tool/run_script] {skill_id} :: {' '.join(cmd[1:])}")
 
         try:
+            _shared_dir = str(Path(self.repo_root) / '_shared')
+            _pypath = os.pathsep.join([str(skill_dir), _shared_dir])
             result = _sp.run(cmd, capture_output=True, text=True,
                              timeout=timeout, cwd=str(skill_dir),
-                             env={**os.environ, 'PYTHONPATH': str(skill_dir)})
+                             env={**os.environ, 'PYTHONPATH': _pypath})
         except _sp.TimeoutExpired:
             return {'success': False, 'run_id': run_id,
                     'error': f'timeout after {timeout}s',
@@ -1923,10 +2014,12 @@ class Handler(BaseHTTPRequestHandler):
         print(f"  [preflight] Running: {' '.join(dl_cmd)}")
 
         try:
+            _shared_dir = str(Path(__file__).resolve().parent / '_shared')
+            _pypath = os.pathsep.join([str(script.parent), _shared_dir])
             dl_result = _subprocess.run(
                 dl_cmd, capture_output=True, text=True, timeout=600,
                 cwd=str(script.parent),
-                env={**os.environ, 'PYTHONPATH': str(script.parent)})
+                env={**os.environ, 'PYTHONPATH': _pypath})
             if dl_result.returncode != 0:
                 print(f"  [preflight] Download failed: {dl_result.stderr[:500]}")
             else:
@@ -2382,6 +2475,64 @@ class Handler(BaseHTTPRequestHandler):
             return {'error': f'No Python scripts found in {skill_path}/', 'success': False}
         script_path = resolved
 
+        # ── Auto-redirect to standalone scripts for co-expression/co-essentiality ──
+        # The standalone scripts produce rich output (barplot, network, FDR table)
+        # while the main script's --modules coexpression/coessentiality only gives
+        # a basic top-N TSV. Always prefer standalone scripts.
+        if 'depmap-analysis-for-gene' in skill_path:
+            # Gather all text signals to detect co-expression / co-essentiality intent
+            _all_text = ' '.join([
+                req.get('latest_user_text', ''),
+                req.get('llm_reply', ''),
+                req.get('conversation_text', '') or '',
+                str(llm_args or ''),
+                str(params),
+            ]).lower()
+            _is_coexpr = any(kw in _all_text for kw in [
+                'co-expression', 'coexpression', 'co-expressed', 'coexpressed',
+                'correlated genes', 'co_expression',
+            ])
+            _is_coess = any(kw in _all_text for kw in [
+                'co-essentiality', 'coessentiality', 'co-essential', 'coessential',
+                'co-dependency', 'codependency', 'co_essentiality',
+            ])
+            # Only redirect if the current script is the main one (not already standalone)
+            if _is_coexpr and 'coexpression' not in script_path.stem:
+                alt = skill_dir / 'scripts' / 'depmap_coexpression.py'
+                if alt.exists():
+                    print(f"  [agent] ↗ Redirecting to standalone depmap_coexpression.py (richer output)")
+                    script_path = alt
+                    # Strip --modules from llm_args if present
+                    if isinstance(llm_args, list):
+                        new_args = []
+                        skip = False
+                        for a in llm_args:
+                            if skip:
+                                skip = False
+                                continue
+                            if a == '--modules':
+                                skip = True
+                                continue
+                            new_args.append(a)
+                        llm_args = new_args
+            elif _is_coess and 'coessentiality' not in script_path.stem:
+                alt = skill_dir / 'scripts' / 'depmap_coessentiality.py'
+                if alt.exists():
+                    print(f"  [agent] ↗ Redirecting to standalone depmap_coessentiality.py (richer output)")
+                    script_path = alt
+                    if isinstance(llm_args, list):
+                        new_args = []
+                        skip = False
+                        for a in llm_args:
+                            if skip:
+                                skip = False
+                                continue
+                            if a == '--modules':
+                                skip = True
+                                continue
+                            new_args.append(a)
+                        llm_args = new_args
+
         # ── Determine build strategy ────────────────────────────────────────
         # If the LLM provided args (from reading SKILL.md), use them directly.
         # This is the "LLM-first" approach: the LLM already knows the correct
@@ -2632,14 +2783,39 @@ class Handler(BaseHTTPRequestHandler):
                 i += 1
 
             # Add preflight data file paths (LLM doesn't know about cached files)
-            # Only add if not already specified by LLM args
+            # Only add if not already specified with a VALID path by LLM args.
+            # The LLM often hallucinates paths (e.g. /Users/.../file.csv from
+            # user's local machine) that don't exist on the server — override those.
             llm_flag_set = set()
-            for arg in llm_args:
+            llm_flag_values = {}
+            for idx, arg in enumerate(llm_args):
                 if arg.startswith('--'):
-                    llm_flag_set.add(arg.lstrip('-'))
+                    f = arg.lstrip('-')
+                    llm_flag_set.add(f)
+                    if idx + 1 < len(llm_args) and not llm_args[idx + 1].startswith('--'):
+                        llm_flag_values[f] = llm_args[idx + 1]
             for flag, path in preflight_flags.items():
                 if flag not in llm_flag_set:
                     cmd += [f'--{flag}', path]
+                else:
+                    # LLM specified this flag — check if its value is a valid path
+                    llm_val = llm_flag_values.get(flag, '')
+                    if llm_val and not Path(llm_val).exists():
+                        print(f"  [agent] LLM path for --{flag} does not exist: {llm_val}")
+                        print(f"  [agent] Replacing with cached: {path}")
+                        # Remove invalid path from cmd and replace
+                        new_cmd = []
+                        skip_next = False
+                        for c in cmd:
+                            if skip_next:
+                                skip_next = False
+                                continue
+                            if c == f'--{flag}':
+                                skip_next = True
+                                continue
+                            new_cmd.append(c)
+                        cmd = new_cmd
+                        cmd += [f'--{flag}', path]
 
             # ── Preemptive resolver: fill in any required flag the LLM forgot ──
             # e.g. LLM's prose mentions "log2FoldChange 作为 X 轴" but EXEC_ARGS
@@ -2775,10 +2951,12 @@ class Handler(BaseHTTPRequestHandler):
         while attempt <= max_retries:
             attempt += 1
             try:
+                _shared_dir = str(Path(__file__).resolve().parent / '_shared')
+                _pypath = os.pathsep.join([str(skill_dir), _shared_dir])
                 result = _subprocess.run(
                     cmd, capture_output=True, text=True, timeout=300,
                     cwd=str(skill_dir),
-                    env={**os.environ, 'PYTHONPATH': str(skill_dir)})
+                    env={**os.environ, 'PYTHONPATH': _pypath})
             except _subprocess.TimeoutExpired:
                 debug_log.append(f"⏱ Attempt {attempt}: timed out (>5 min)")
                 # Try with shorter scope or skip retry

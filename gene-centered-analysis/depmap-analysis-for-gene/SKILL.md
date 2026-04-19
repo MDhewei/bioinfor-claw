@@ -76,8 +76,11 @@ Default:
 - `full`
 
 ### Data files
-These are required only when the selected modules need them.
+**DO NOT include data file paths in your EXEC_ARGS.** The server automatically
+locates cached DepMap data files and injects them into the command. If you
+specify a path, it will likely be wrong (user's local path ≠ server path).
 
+The server auto-wires these flags when needed:
 - `--expression-file`
 - `--mutation-file`
 - `--copy-number-file`
@@ -111,8 +114,8 @@ Choose modules and parameters based on the biological question:
 | "mutation landscape" | `--modules mutation` |
 | "copy number / amplification / deletion" | `--modules copy_number` |
 | "essential? dependency? CRISPR screen?" | `--modules essentiality` |
-| "what genes are co-expressed with X?" | **Use standalone script** `depmap_coexpression.py` (produces barplot + network + FDR table). Fallback: `--modules coexpression` in main script (TSV only). |
-| "what genes are co-essential with X?" | **Use standalone script** `depmap_coessentiality.py` (produces barplot + network + FDR table). Fallback: `--modules coessentiality` in main script (TSV only). |
+| "what genes are co-expressed with X?" | **MUST use standalone script** `depmap_coexpression.py` (produces barplot + network + FDR table). Do NOT use `--modules coexpression` in the main script — it produces only a basic TSV with no plots. |
+| "what genes are co-essential with X?" | **MUST use standalone script** `depmap_coessentiality.py` (produces barplot + network + FDR table). Do NOT use `--modules coessentiality` in the main script — it produces only a basic TSV with no plots. |
 | "co-expression in TCGA / patient samples" | **Wrong skill!** Use `coexpression-for-gene` (TCGA patient-level). This skill is DepMap cell lines only. |
 | "full profile" or no specific module mentioned | `--modules full` |
 | "top 10 / top 20 correlated genes" | `--top-n 10` or `--top-n 20` |

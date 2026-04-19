@@ -8,8 +8,11 @@ from typing import List, Optional, Set, Tuple
 
 import matplotlib.pyplot as plt
 import sys as _sys, os as _os
-_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', '..', '..', '_shared'))
-from plot_style import init_style
+try:
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), *(['..'] * 3), '_shared'))
+    from plot_style import init_style
+except ImportError:
+    def init_style(**kw): pass  # graceful fallback if _shared not available
 import pandas as pd
 
 

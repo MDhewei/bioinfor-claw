@@ -20,12 +20,126 @@ import re
 import sys
 from typing import List, Optional
 
+import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '_shared'))
-from plot_style import init_style, save_fig
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), *(['..'] * 3), '_shared'))
+    from plot_style import init_style, save_fig
+except ImportError:
+    def init_style(**kw): pass
+    def save_fig(fig, path, close=True, **kw):
+        fig.savefig(path, dpi=300, bbox_inches='tight')
+        if close: import matplotlib.pyplot as _p; _p.close(fig)
+
+
+# ─── scipy-free fallback implementations ─────────────────────────────────────
+# These allow the script to run even when scipy is not installed.
+# Uses Numerical Recipes continued-fraction method for the regularised
+# incomplete beta function, which gives the two-tailed p-value for Pearson r.
+
+def _betacf(a, b, x):
+    """Continued fraction for incomplete beta (Numerical Recipes)."""
+    MAXIT, EPS, FPMIN = 200, 3e-14, 1e-30
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < FPMIN: d = FPMIN
+    d = 1.0 / d
+    h = d
+    for m in range(1, MAXIT + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < FPMIN: d = FPMIN
+        c = 1.0 + aa / c
+        if abs(c) < FPMIN: c = FPMIN
+        d = 1.0 / d; h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < FPMIN: d = FPMIN
+        c = 1.0 + aa / c
+        if abs(c) < FPMIN: c = FPMIN
+        d = 1.0 / d; delta = d * c; h *= delta
+        if abs(delta - 1.0) < EPS: break
+    return h
+
+
+def _betainc(a, b, x):
+    """Regularised incomplete beta function I_x(a, b)."""
+    if x <= 0: return 0.0
+    if x >= 1: return 1.0
+    ln_pre = (math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+              + a * math.log(x) + b * math.log(1 - x))
+    front = math.exp(ln_pre)
+    if x < (a + 1) / (a + b + 2):
+        return front * _betacf(a, b, x) / a
+    else:
+        return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+def _pearsonr_np(x, y):
+    """Pearson correlation with two-tailed p-value (numpy only)."""
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    n = len(x)
+    if n < 3:
+        return np.nan, 1.0
+    xm = x - x.mean()
+    ym = y - y.mean()
+    denom = math.sqrt(np.dot(xm, xm) * np.dot(ym, ym))
+    if denom < 1e-16:
+        return 0.0, 1.0
+    r = float(max(-1.0, min(1.0, np.dot(xm, ym) / denom)))
+    if abs(r) == 1.0:
+        return r, 0.0
+    t2 = r * r * (n - 2) / (1.0 - r * r)
+    df = n - 2
+    p = _betainc(df / 2.0, 0.5, df / (df + t2))
+    return r, p
+
+
+def _rankdata_np(a):
+    """Rank data array (average ties), numpy only."""
+    a = np.asarray(a, dtype=np.float64)
+    sorter = np.argsort(a, kind='mergesort')
+    inv = np.empty_like(sorter)
+    inv[sorter] = np.arange(len(a))
+    a_sorted = a[sorter]
+    obs = np.concatenate(([True], a_sorted[1:] != a_sorted[:-1]))
+    dense = np.cumsum(obs)[inv]
+    count = np.bincount(dense)
+    cumcount = np.concatenate(([0], np.cumsum(count)))
+    ranks = np.empty(len(a), dtype=np.float64)
+    for i in range(len(a)):
+        d = dense[i]
+        ranks[i] = 0.5 * (cumcount[d] + cumcount[d] + count[d] + 1)
+    return ranks
+
+
+def _spearmanr_np(x, y):
+    """Spearman rank correlation with two-tailed p-value (numpy only)."""
+    return _pearsonr_np(_rankdata_np(x), _rankdata_np(y))
+
+
+# Try to import scipy; fall back to numpy implementations
+try:
+    from scipy.stats import pearsonr as _scipy_pearsonr, spearmanr as _scipy_spearmanr
+    from scipy.stats import rankdata as _scipy_rankdata
+    _pearsonr = _scipy_pearsonr
+    _rankdata = _scipy_rankdata
+    def _spearmanr(x, y):
+        res = _scipy_spearmanr(x, y)
+        return res.correlation if hasattr(res, 'correlation') else res[0], \
+               res.pvalue if hasattr(res, 'pvalue') else res[1]
+    print("[INFO] Using scipy for correlation functions")
+except ImportError:
+    _pearsonr = _pearsonr_np
+    _spearmanr = _spearmanr_np
+    _rankdata = _rankdata_np
+    print("[INFO] scipy not available — using numpy fallback for correlations")
 
 
 # ─── Utilities ────────────────────────────────────────────────────────────────
@@ -56,7 +170,6 @@ def compute_correlations(
 ) -> pd.DataFrame:
     """Correlate `gene` against all other genes. Returns full ranked DataFrame
     with gene_symbol, correlation, p-value, FDR."""
-    from scipy.stats import pearsonr, spearmanr
 
     col = find_gene_column(list(matrix.columns), gene)
     if col is None:
@@ -67,7 +180,7 @@ def compute_correlations(
     common_idx = target.index
 
     results = []
-    corr_fn = pearsonr if method == "pearson" else spearmanr
+    corr_fn = _pearsonr if method == "pearson" else _spearmanr
 
     for c in other_cols:
         vec = matrix[c].reindex(common_idx).dropna()
@@ -96,15 +209,42 @@ def compute_correlations(
     if len(df) == 0:
         return df
 
-    # FDR (Benjamini-Hochberg)
-    from scipy.stats import rankdata
+    # FDR (Benjamini-Hochberg with monotonicity enforcement)
     pvals = df["pvalue"].values
     n = len(pvals)
-    ranked = rankdata(pvals)
-    fdr = np.minimum((pvals * n) / ranked, 1.0)
+    sort_idx = np.argsort(pvals)
+    sorted_pvals = pvals[sort_idx]
+    # BH adjusted p-values: p_adj[i] = p[i] * n / (i+1)
+    fdr_sorted = sorted_pvals * n / np.arange(1, n + 1)
+    # Enforce monotonicity: walk backwards, each value must be <= the next
+    for i in range(n - 2, -1, -1):
+        fdr_sorted[i] = min(fdr_sorted[i], fdr_sorted[i + 1])
+    fdr_sorted = np.minimum(fdr_sorted, 1.0)
+    # Map back to original order
+    fdr = np.empty(n)
+    fdr[sort_idx] = fdr_sorted
     df["fdr"] = fdr
     df = df.sort_values("correlation", key=abs, ascending=False).reset_index(drop=True)
     return df
+
+
+# ─── Helper: select top positive AND top negative hits ───────────────────────
+
+def _select_top_pos_neg(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
+    """Select top_n/2 most positive and top_n/2 most negative correlations.
+    If one side has fewer genes, the other side fills the gap."""
+    pos = df[df["correlation"] > 0].sort_values("correlation", ascending=False)
+    neg = df[df["correlation"] < 0].sort_values("correlation", ascending=True)
+    half = top_n // 2
+    # If one side is short, give the surplus to the other
+    n_pos = min(len(pos), half)
+    n_neg = min(len(neg), half)
+    if n_pos < half:
+        n_neg = min(len(neg), top_n - n_pos)
+    elif n_neg < half:
+        n_pos = min(len(pos), top_n - n_neg)
+    selected = pd.concat([pos.head(n_pos), neg.head(n_neg)], ignore_index=True)
+    return selected
 
 
 # ─── Plotting: horizontal bar chart ──────────────────────────────────────────
@@ -118,7 +258,7 @@ def plot_top_coexpressed(
     if len(df) < 1:
         print("[warn] No results to plot for bar chart")
         return
-    top = df.head(top_n).copy().sort_values("correlation")
+    top = _select_top_pos_neg(df, top_n).sort_values("correlation")
 
     fig_h = max(5, len(top) * 0.28 + 1.5)
     fig, ax = plt.subplots(figsize=(9, fig_h))
@@ -149,7 +289,7 @@ def plot_network(
     if len(df) < 2:
         print("[warn] Too few results for network plot")
         return
-    top = df.head(top_n).copy()
+    top = _select_top_pos_neg(df, top_n).copy()
 
     np.random.seed(42)
     n = len(top)
@@ -254,8 +394,10 @@ def main():
                         default="pearson", help="Correlation method (default: pearson)")
     parser.add_argument("--top-n", type=int, default=30,
                         help="Number of top co-expressed genes to plot (default: 30)")
-    parser.add_argument("--fdr-cutoff", type=float, default=0.05,
-                        help="FDR threshold for reporting (default: 0.05)")
+    parser.add_argument("--fdr-cutoff", type=float, default=0.01,
+                        help="FDR threshold for significance (default: 0.01)")
+    parser.add_argument("--min-corr", type=float, default=0.2,
+                        help="Minimum |correlation| for significant genes (default: 0.2)")
     parser.add_argument("--network-top-n", type=int, default=30,
                         help="Top N genes for network visualization (default: 30)")
     parser.add_argument("--outdir", default=".", help="Output directory")
@@ -271,6 +413,12 @@ def main():
     # Load expression matrix
     print(f"[INFO] Loading expression matrix: {args.expression_file}")
     expr = pd.read_csv(args.expression_file, low_memory=False, index_col=0)
+    # Drop non-numeric columns (metadata like SequencingID, ModelID, etc.)
+    num_cols = expr.select_dtypes(include=[np.number]).columns
+    dropped = len(expr.columns) - len(num_cols)
+    if dropped > 0:
+        print(f"[INFO] Dropped {dropped} non-numeric metadata columns")
+        expr = expr[num_cols]
     print(f"[INFO] Matrix: {expr.shape[0]} cell lines × {expr.shape[1]} genes")
 
     # Compute correlations
@@ -286,11 +434,14 @@ def main():
     corr_df.to_csv(full_path, sep="\t", index=False)
     print(f"Saved: {full_path} ({len(corr_df)} genes)")
 
-    # FDR-filtered
-    sig = corr_df[corr_df["fdr"] <= args.fdr_cutoff]
+    # Significant genes: |correlation| >= min_corr AND FDR <= fdr_cutoff
+    sig = corr_df[
+        (corr_df["fdr"] <= args.fdr_cutoff) &
+        (corr_df["correlation"].abs() >= args.min_corr)
+    ]
     sig_path = os.path.join(args.outdir, f"{gene}.depmap_coexpression_sig.tsv")
     sig.to_csv(sig_path, sep="\t", index=False)
-    print(f"Saved: {sig_path} ({len(sig)} significant genes, FDR ≤ {args.fdr_cutoff})")
+    print(f"Saved: {sig_path} ({len(sig)} significant genes, |r| ≥ {args.min_corr} & FDR ≤ {args.fdr_cutoff})")
 
     # Bar plot
     plot_top_coexpressed(
@@ -307,7 +458,7 @@ def main():
     # Summary
     print(f"\n=== DepMap Co-expression Summary for {gene} ===")
     print(f"Total genes correlated : {len(corr_df)}")
-    print(f"Significant (FDR≤{args.fdr_cutoff})  : {len(sig)}")
+    print(f"Significant (|r|≥{args.min_corr}, FDR≤{args.fdr_cutoff}): {len(sig)}")
     if len(corr_df) > 0:
         top = corr_df.iloc[0]
         print(f"Top co-expressed       : {top['gene_symbol']} (r={top['correlation']:.3f}, FDR={top['fdr']:.2e})")
