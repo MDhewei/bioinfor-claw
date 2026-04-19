@@ -2,8 +2,12 @@
 """
 Co-expression for Gene: Find genes co-expressed with a query gene.
 
-Computes Pearson/Spearman correlations across TCGA or GTEx data,
-applies FDR correction, runs GO enrichment, and generates network visualizations.
+Computes Pearson/Spearman correlations across TCGA (via cBioPortal API)
+or GTEx data, applies FDR correction, runs GO enrichment, and generates
+network visualizations.
+
+Data source: cBioPortal public API (https://www.cbioportal.org/api/)
+TCGA PanCancer Atlas studies are queried by default.
 """
 
 import argparse
@@ -13,6 +17,7 @@ import os
 from typing import Dict, Tuple, Optional, List
 import urllib.request
 import urllib.error
+import urllib.parse
 import time
 
 import math
@@ -131,159 +136,204 @@ def load_expression_matrix(filepath: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-# --------------------------------------------------------------------------- #
-# Synthetic data generation
-#
-# We do NOT have a live GDC / GTEx API wired up, so demo runs fall back to a
-# reproducible synthetic matrix. Historically this matrix used dummy gene
-# names ("GENE_0"…"GENE_4999"), which broke every real HGNC query (e.g.
-# --gene PRNP → "Gene not found"). The matrix now ALWAYS includes:
-#   • the user-supplied --gene (so extract_gene_vector always succeeds)
-#   • a curated pool of real human gene symbols (so GO enrichment yields
-#     meaningful terms, not garbage)
-# The random seed is derived from the dataset + cancer-type/tissue so different
-# cancers / tissues produce DIFFERENT but reproducible co-expression patterns.
-# --------------------------------------------------------------------------- #
+# ─── cBioPortal API ──────────────────────────────────────────────────────────
 
-# Curated pool of ~400 real human HGNC gene symbols covering oncogenes, tumor
-# suppressors, DNA-repair, cell-cycle, signaling, metabolism, immune, and
-# housekeeping genes. Large enough for meaningful correlation + GO enrichment
-# demos, small enough to keep inline. Augmented with the query gene at runtime.
-_REAL_GENE_POOL = [
-    # Tumor suppressors / oncogenes
-    "TP53","BRCA1","BRCA2","EGFR","MYC","KRAS","PTEN","AKT1","PIK3CA","MTOR",
-    "RB1","CDKN2A","CDKN2B","CDKN1A","CDKN1B","CDH1","VHL","ATM","CHEK1","CHEK2",
-    "PALB2","RAD51","RAD51B","RAD51C","RAD51D","FANCA","FANCB","FANCC","FANCD2",
-    "FANCE","FANCF","FANCG","BARD1","BLM","WRN","NBN","MRE11","XRCC1","XRCC2","XRCC3",
-    "ERCC1","ERCC2","ERCC3","ERCC4","ERCC5","XPA","XPC","POLH","POLE","POLD1",
-    "MLH1","MSH2","MSH6","PMS1","PMS2","APC","MUTYH","SMAD2","SMAD3","SMAD4",
-    "SMARCA4","SMARCB1","ARID1A","ARID1B","ARID2","PBRM1","SETD2","KDM6A","EZH2",
-    # Cell cycle
-    "CCND1","CCND2","CCND3","CCNE1","CCNE2","CCNA1","CCNA2","CCNB1","CCNB2",
-    "CDK1","CDK2","CDK4","CDK6","CDK7","CDK9","E2F1","E2F2","E2F3","E2F4","MDM2",
-    "MDM4","WEE1","AURKA","AURKB","PLK1","BUB1","BUB1B","MAD2L1","TTK","KIF11",
-    # Apoptosis
-    "BCL2","BCL2L1","BAX","BAK1","BID","BAD","BBC3","PMAIP1","MCL1","BIRC5",
-    "XIAP","CASP3","CASP7","CASP8","CASP9","CASP10","FADD","TRADD","TNF","FAS",
-    "FASLG","TRAIL","APAF1","DIABLO","CYCS",
-    # PI3K/AKT/mTOR + MAPK
-    "PIK3CB","PIK3CD","PIK3CG","PIK3R1","PIK3R2","AKT2","AKT3","TSC1","TSC2",
-    "RHEB","RAPTOR","RICTOR","MLST8","DEPTOR","S6K1","S6K2","EIF4E","EIF4EBP1",
-    "NRAS","HRAS","BRAF","RAF1","MAP2K1","MAP2K2","MAPK1","MAPK3","MAPK8","MAPK9",
-    "MAPK14","JUN","FOS","MAX","MYCN","MYCL",
-    # Wnt / Hedgehog / Notch / Hippo
-    "WNT1","WNT3A","WNT5A","CTNNB1","AXIN1","AXIN2","GSK3A","GSK3B","DVL1","DVL2",
-    "DVL3","TCF7","LEF1","FZD1","FZD2","LRP5","LRP6","PORCN","DKK1","SFRP1",
-    "SHH","IHH","DHH","PTCH1","PTCH2","SMO","GLI1","GLI2","GLI3","SUFU",
-    "NOTCH1","NOTCH2","NOTCH3","NOTCH4","JAG1","JAG2","DLL1","DLL3","DLL4","HES1",
-    "YAP1","TAZ","LATS1","LATS2","MST1","MST2","TEAD1","TEAD4",
-    # DNA replication / transcription
-    "MCM2","MCM3","MCM4","MCM5","MCM6","MCM7","PCNA","RFC1","RFC2","RFC3",
-    "POLA1","POLA2","PRIM1","PRIM2","TOP1","TOP2A","TOP2B","TYMS","TK1","RRM1",
-    "RRM2","POLR2A","POLR2B","POLR2C","GTF2B","GTF2F1","TBP","TAF1","EP300","CREBBP",
-    # Immune / cytokines
-    "IL2","IL4","IL6","IL7","IL10","IL12A","IL13","IL15","IL17A","IL18","IL21","IL23A",
-    "IFNG","IFNA1","IFNB1","TNFRSF1A","TNFRSF1B","TNFSF10","CD4","CD8A","CD8B",
-    "CD19","CD20","CD274","PDCD1","PDCD1LG2","CTLA4","LAG3","TIGIT","HAVCR2","FOXP3",
-    "GATA3","TBX21","RORC","STAT1","STAT2","STAT3","STAT4","STAT5A","STAT5B","STAT6",
-    "JAK1","JAK2","JAK3","TYK2","NFKB1","NFKB2","RELA","RELB","IKBKB","IKBKG",
-    # Metabolism
-    "IDH1","IDH2","SDHA","SDHB","SDHC","SDHD","FH","PKM","LDHA","LDHB","HK1","HK2",
-    "G6PD","PFKM","PFKL","GAPDH","ALDOA","PGK1","ENO1","ACC1","ACLY","FASN","SREBF1",
-    "SREBF2","HMGCR","MLXIPL","PPARG","PPARA","NR0B2","HIF1A","HIF1B","HIF2A","VEGFA",
-    # Prion / neurodegeneration
-    "PRNP","PRND","SNCA","APP","MAPT","HTT","ATXN1","ATXN2","ATXN3","PARK7","LRRK2",
-    "PINK1","SOD1","TARDBP","FUS","C9ORF72","GRN","TREM2",
-    # Housekeeping / reference
-    "ACTB","GAPDH","B2M","HPRT1","PPIA","TBP","UBC","RPL13A","RPS18","YWHAZ","SDHA",
-    "PGK1","HMBS","TFRC","POLR2A","18S","ACTG1",
-    # Extra signaling / receptors
-    "ERBB2","ERBB3","ERBB4","FGFR1","FGFR2","FGFR3","FGFR4","IGF1R","INSR","MET",
-    "ALK","ROS1","RET","KIT","PDGFRA","PDGFRB","FLT1","FLT3","FLT4","KDR",
-    "VEGFB","VEGFC","VEGFD","PGF","NGF","BDNF","NTRK1","NTRK2","NTRK3",
-    "TGFB1","TGFB2","TGFB3","TGFBR1","TGFBR2","BMP2","BMP4","BMP7","ACVR1","ACVR2A",
-    # EMT / cytoskeleton
-    "CDH2","VIM","ZEB1","ZEB2","SNAI1","SNAI2","TWIST1","TWIST2","FN1","COL1A1",
-    "COL1A2","COL3A1","COL4A1","MMP2","MMP7","MMP9","MMP14","TIMP1","TIMP2","TIMP3",
-    "ACTA2","MYH9","MYH10","VCL","ZYX","TLN1","ITGB1","ITGB3","ITGA5","ITGAV",
+CBIO_API = "https://www.cbioportal.org/api"
+
+# TCGA PanCancer Atlas study IDs in cBioPortal
+TCGA_PANCAN_STUDIES = [
+    "acc_tcga_pan_can_atlas_2018", "blca_tcga_pan_can_atlas_2018",
+    "brca_tcga_pan_can_atlas_2018", "cesc_tcga_pan_can_atlas_2018",
+    "chol_tcga_pan_can_atlas_2018", "coadread_tcga_pan_can_atlas_2018",
+    "dlbc_tcga_pan_can_atlas_2018", "esca_tcga_pan_can_atlas_2018",
+    "gbm_tcga_pan_can_atlas_2018", "hnsc_tcga_pan_can_atlas_2018",
+    "kich_tcga_pan_can_atlas_2018", "kirc_tcga_pan_can_atlas_2018",
+    "kirp_tcga_pan_can_atlas_2018", "laml_tcga_pan_can_atlas_2018",
+    "lgg_tcga_pan_can_atlas_2018", "lihc_tcga_pan_can_atlas_2018",
+    "luad_tcga_pan_can_atlas_2018", "lusc_tcga_pan_can_atlas_2018",
+    "meso_tcga_pan_can_atlas_2018", "ov_tcga_pan_can_atlas_2018",
+    "paad_tcga_pan_can_atlas_2018", "pcpg_tcga_pan_can_atlas_2018",
+    "prad_tcga_pan_can_atlas_2018", "sarc_tcga_pan_can_atlas_2018",
+    "skcm_tcga_pan_can_atlas_2018", "stad_tcga_pan_can_atlas_2018",
+    "tgct_tcga_pan_can_atlas_2018", "thca_tcga_pan_can_atlas_2018",
+    "thym_tcga_pan_can_atlas_2018", "ucec_tcga_pan_can_atlas_2018",
+    "ucs_tcga_pan_can_atlas_2018", "uvm_tcga_pan_can_atlas_2018",
 ]
 
-
-def _resolve_seed(dataset: str, cancer_type: Optional[str], tissue: Optional[str]) -> int:
-    """Derive a deterministic seed from dataset + cancer/tissue so different
-    contexts produce different (but reproducible) matrices."""
-    key = f"{dataset}|{cancer_type or ''}|{tissue or ''}".upper()
-    # Positive 32-bit int from a stable hash of the string
-    h = 0
-    for c in key:
-        h = (h * 131 + ord(c)) & 0xFFFFFFFF
-    return h or 42
+# Map short TCGA codes (e.g. BRCA) → cBioPortal study IDs
+_CODE_TO_STUDY = {}
+for _s in TCGA_PANCAN_STUDIES:
+    _code = _s.replace("_tcga_pan_can_atlas_2018", "").upper()
+    _CODE_TO_STUDY[_code] = _s
 
 
-def _synthetic_matrix(n_genes: int, n_samples: int, query_gene: str, seed: int,
-                      sample_prefix: str) -> pd.DataFrame:
-    """Build a synthetic expression matrix that ALWAYS contains `query_gene`
-    and uses real HGNC symbols from _REAL_GENE_POOL (padded if needed)."""
-    rng = np.random.default_rng(seed)
-    # Assemble gene symbol list: query gene first, then pool (deduped), then pad.
-    pool = [query_gene.upper()] + [g for g in _REAL_GENE_POOL if g.upper() != query_gene.upper()]
-    # Dedup while preserving order
-    seen = set(); uniq = []
-    for g in pool:
-        if g not in seen:
-            seen.add(g); uniq.append(g)
-    if len(uniq) < n_genes:
-        # Pad with plausible-looking synthetic symbols (clearly labelled) so the
-        # matrix still has n_genes rows for the correlation loop.
-        uniq += [f"SYN{i:04d}" for i in range(n_genes - len(uniq))]
-    gene_names = uniq[:n_genes]
-    # Baseline noise
-    data = rng.standard_normal((n_genes, n_samples))
-    # Inject structured co-expression: the first ~60 real genes are correlated
-    # with the query gene so the pipeline produces visibly interesting results.
-    qgene_row = data[0]
-    for i in range(1, min(60, n_genes)):
-        # Mix query gene signal with own noise; alternate sign for negative corr
-        alpha = 0.3 + 0.4 * rng.random()
-        sign = 1.0 if (i % 3) != 0 else -1.0
-        data[i] = sign * alpha * qgene_row + np.sqrt(1 - alpha**2) * data[i]
-    sample_names = [f"{sample_prefix}_{i:03d}" for i in range(n_samples)]
-    return pd.DataFrame(data, index=gene_names, columns=sample_names)
+def _cbio_get(endpoint: str, params: dict | None = None, timeout: int = 30):
+    """GET from cBioPortal REST API. Returns parsed JSON."""
+    url = f"{CBIO_API}{endpoint}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
 
 
-def generate_synthetic_tcga_data(n_genes: int = 5000, n_samples: int = 200,
-                                 query_gene: str = "TP53",
-                                 cancer_type: Optional[str] = None) -> pd.DataFrame:
+def _cbio_post(endpoint: str, body: dict, timeout: int = 120,
+               params: dict | None = None):
+    """POST JSON to cBioPortal REST API. Returns parsed JSON."""
+    url = f"{CBIO_API}{endpoint}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method="POST",
+                                headers={"Content-Type": "application/json",
+                                         "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _resolve_study_id(cancer_type: str) -> str:
+    """Resolve short TCGA code (e.g. BRCA) to cBioPortal study ID."""
+    ct = cancer_type.upper().replace("TCGA-", "")
+    if ct in _CODE_TO_STUDY:
+        return _CODE_TO_STUDY[ct]
+    # Try as literal study ID
+    return f"{ct.lower()}_tcga_pan_can_atlas_2018"
+
+
+def _find_mrna_profile(study_id: str) -> Optional[str]:
+    """Find the mRNA expression molecular profile ID for a study."""
+    profiles = _cbio_get(f"/studies/{study_id}/molecular-profiles")
+    # Prefer RNA Seq V2 (RSEM), fall back to any mRNA profile
+    candidates = []
+    for p in profiles:
+        alt_type = p.get("molecularAlterationType", "")
+        pid = p.get("molecularProfileId", "")
+        if alt_type == "MRNA_EXPRESSION":
+            candidates.append(p)
+    if not candidates:
+        return None
+    # Prefer rna_seq_v2_mrna (RSEM normalized), then any
+    for c in candidates:
+        pid = c["molecularProfileId"]
+        if "rna_seq_v2_mrna" in pid and "z_scores" not in pid.lower():
+            return pid
+    # Fall back to first non-z-score mRNA profile
+    for c in candidates:
+        pid = c["molecularProfileId"]
+        if "z_scores" not in pid.lower() and "zscores" not in pid.lower():
+            return pid
+    return candidates[0]["molecularProfileId"]
+
+
+def _get_sample_list_id(study_id: str) -> Optional[str]:
+    """Get the RNA-seq sample list ID for a study."""
+    try:
+        sample_lists = _cbio_get(f"/studies/{study_id}/sample-lists")
+        # Prefer RNA-seq specific list, fall back to "all"
+        for sl in sample_lists:
+            slid = sl.get("sampleListId", "")
+            if "rna_seq" in slid.lower() or "mrna" in slid.lower():
+                return slid
+        # Fall back to _all
+        for sl in sample_lists:
+            slid = sl.get("sampleListId", "")
+            if slid.endswith("_all"):
+                return slid
+        return sample_lists[0]["sampleListId"] if sample_lists else None
+    except Exception:
+        return None
+
+
+def fetch_cbio_expression_matrix(
+    query_gene: str,
+    cancer_type: str,
+) -> pd.DataFrame:
     """
-    Generate synthetic TCGA-like expression data for demonstration.
-    In production, this would fetch from GDC API.
-    Always includes `query_gene` in the matrix so downstream lookup succeeds.
-    """
-    seed = _resolve_seed("tcga", cancer_type, None)
-    tag = (cancer_type or "TCGA").upper()
-    print(f"Generating synthetic TCGA-{tag} data: {n_genes} genes x {n_samples} samples "
-          f"(includes query gene {query_gene}, seed={seed})...")
-    print("  NOTE: synthetic placeholder matrix — not real TCGA expression. "
-          "For production analyses, supply --dataset custom --expression-file <TSV>.")
-    return _synthetic_matrix(n_genes, n_samples, query_gene, seed,
-                             sample_prefix=f"TCGA-{tag}")
+    Fetch mRNA expression matrix from cBioPortal for a TCGA PanCancer study.
 
+    Strategy:
+    1. Get the mRNA molecular profile ID and sample list
+    2. Fetch expression for ALL genes across all samples via
+       POST /molecular-profiles/{profileId}/molecular-data/fetch
+    3. Pivot into genes × samples matrix
 
-def generate_synthetic_gtex_data(n_genes: int = 5000, n_samples: int = 150,
-                                 query_gene: str = "TP53",
-                                 tissue: Optional[str] = None) -> pd.DataFrame:
+    Returns DataFrame with genes as rows, samples as columns.
     """
-    Generate synthetic GTEx-like expression data for demonstration.
-    Always includes `query_gene` in the matrix so downstream lookup succeeds.
-    """
-    seed = _resolve_seed("gtex", None, tissue)
-    tag = (tissue or "GTEX").replace(" ", "_").upper()[:32]
-    print(f"Generating synthetic GTEx-{tag} data: {n_genes} genes x {n_samples} samples "
-          f"(includes query gene {query_gene}, seed={seed})...")
-    print("  NOTE: synthetic placeholder matrix — not real GTEx expression. "
-          "For production analyses, supply --dataset custom --expression-file <TSV>.")
-    return _synthetic_matrix(n_genes, n_samples, query_gene, seed,
-                             sample_prefix=f"GTEX-{tag}")
+    study_id = _resolve_study_id(cancer_type)
+    print(f"[INFO] cBioPortal study: {study_id}")
+
+    # Find mRNA profile
+    profile_id = _find_mrna_profile(study_id)
+    if not profile_id:
+        raise ValueError(f"No mRNA expression profile found for {study_id}")
+    print(f"[INFO] mRNA profile: {profile_id}")
+
+    # Get sample list
+    sample_list_id = _get_sample_list_id(study_id)
+    if not sample_list_id:
+        raise ValueError(f"No sample list found for {study_id}")
+    print(f"[INFO] Sample list: {sample_list_id}")
+
+    # Fetch expression data for all genes using the sample list
+    # This endpoint returns all gene expression values for the given samples
+    print(f"[INFO] Fetching expression data (this may take a minute)…")
+    body = {"sampleListId": sample_list_id}
+    raw_data = _cbio_post(
+        f"/molecular-profiles/{profile_id}/molecular-data/fetch",
+        body,
+        timeout=300,  # large request, give it time
+    )
+
+    if not raw_data:
+        raise ValueError(f"cBioPortal returned no expression data for {study_id}")
+
+    print(f"[INFO] Received {len(raw_data)} data points from cBioPortal")
+
+    # Build gene → sample → value mapping
+    rows = []
+    for entry in raw_data:
+        gene_symbol = entry.get("hugoGeneSymbol") or entry.get("gene", {}).get("hugoGeneSymbol")
+        sample_id = entry.get("sampleId")
+        value = entry.get("value")
+        if gene_symbol and sample_id and value is not None:
+            rows.append({
+                "gene": gene_symbol,
+                "sample": sample_id,
+                "value": float(value),
+            })
+
+    if not rows:
+        raise ValueError("Could not parse expression data from cBioPortal response")
+
+    df_long = pd.DataFrame(rows)
+
+    # Check that query gene is present
+    gene_upper = query_gene.upper()
+    available_genes = set(df_long["gene"].str.upper())
+    if gene_upper not in available_genes:
+        # Try case-insensitive match
+        matches = [g for g in df_long["gene"].unique() if g.upper() == gene_upper]
+        if not matches:
+            raise ValueError(
+                f"Gene {query_gene} not found in {study_id} expression data. "
+                f"Available genes: {len(available_genes)}"
+            )
+
+    # Pivot to genes × samples
+    print(f"[INFO] Building expression matrix…")
+    expr_matrix = df_long.pivot_table(
+        index="gene", columns="sample", values="value",
+        aggfunc="first",  # take first if duplicates
+    )
+
+    # Remove genes with zero variance
+    gene_var = expr_matrix.var(axis=1)
+    expr_matrix = expr_matrix[gene_var > 0.01]
+
+    n_genes, n_samples = expr_matrix.shape
+    print(f"[INFO] Expression matrix: {n_genes} genes × {n_samples} samples")
+
+    return expr_matrix
 
 
 def extract_gene_vector(
@@ -694,13 +744,24 @@ def main():
             return 1
         expr_df = load_expression_matrix(args.expression_file)
     elif args.dataset == "tcga":
-        expr_df = generate_synthetic_tcga_data(
-            n_genes=5000, n_samples=200,
-            query_gene=args.gene, cancer_type=args.cancer_type)
-    else:  # gtex
-        expr_df = generate_synthetic_gtex_data(
-            n_genes=5000, n_samples=150,
-            query_gene=args.gene, tissue=args.tissue)
+        try:
+            expr_df = fetch_cbio_expression_matrix(
+                query_gene=args.gene,
+                cancer_type=args.cancer_type,
+            )
+        except Exception as e:
+            print(f"Error fetching TCGA data from cBioPortal: {e}", file=sys.stderr)
+            print("Hint: check internet connection or try --dataset custom "
+                  "with a local expression matrix.", file=sys.stderr)
+            return 1
+    elif args.dataset == "gtex":
+        # GTEx is not available via cBioPortal — require user-provided file
+        if not args.expression_file:
+            print("Error: GTEx data requires --expression-file with a local "
+                  "expression matrix (genes × samples TSV). GTEx data is not "
+                  "available via cBioPortal.", file=sys.stderr)
+            return 1
+        expr_df = load_expression_matrix(args.expression_file)
 
     if expr_df.empty:
         print("Error: Could not load expression data", file=sys.stderr)
@@ -762,8 +823,10 @@ def main():
         f.write(f"Dataset: {args.dataset}\n")
         if args.dataset == "tcga":
             f.write(f"Cancer type: {args.cancer_type}\n")
+            f.write(f"Data source: cBioPortal (TCGA PanCancer Atlas)\n")
         elif args.dataset == "gtex":
             f.write(f"Tissue: {args.tissue}\n")
+            f.write(f"Data source: user-provided expression file\n")
         f.write(f"Correlation method: {args.method}\n")
         f.write(f"FDR cutoff: {args.fdr_cutoff}\n")
         f.write(f"Expression matrix: {expr_df.shape[0]} genes x {expr_df.shape[1]} samples\n\n")

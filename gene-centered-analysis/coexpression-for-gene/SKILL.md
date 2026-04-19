@@ -1,20 +1,22 @@
 ---
 name: coexpression-for-gene
-description: "Co-expression in PATIENT SAMPLES (TCGA tumors / GTEx normal tissues). NOT for cell lines — use depmap_coexpression.py for DepMap cell-line co-expression. Computes Pearson/Spearman correlations, FDR correction, GO enrichment, and network visualization. Currently uses synthetic placeholder data unless --dataset custom --expression-file is supplied."
+description: "Co-expression in PATIENT SAMPLES (TCGA tumors / GTEx normal tissues). NOT for cell lines — use depmap_coexpression.py for DepMap cell-line co-expression. Fetches real TCGA expression from cBioPortal API (PanCancer Atlas). GTEx requires user-provided expression file."
 ---
 
 # Co-expression for Gene (TCGA / GTEx Patient Samples)
 
-> **⚠️ DATA STATUS:** This skill currently uses **synthetic placeholder data**
-> when `--dataset tcga` or `--dataset gtex` is selected. The synthetic matrix
-> includes real HGNC gene symbols and structured correlations so the pipeline
-> runs end-to-end, but the results are NOT derived from real patient expression.
-> For real analyses, supply your own expression matrix via
-> `--dataset custom --expression-file <TSV>` (e.g. a UCSC Xena per-cancer matrix).
-
 > **⚠️ SCOPE:** This skill analyzes co-expression across **patient/tissue samples**
 > (TCGA tumors, GTEx normal tissues). For co-expression across **cancer cell lines**
 > (DepMap), use `depmap-analysis-for-gene` → `depmap_coexpression.py` instead.
+
+## Data Sources
+
+1. **TCGA (default)** — Fetches mRNA expression (RNA-Seq V2 RSEM) from the
+   cBioPortal REST API (`www.cbioportal.org`). Queries TCGA PanCancer Atlas
+   studies (32 cancer types). Requires internet access.
+2. **GTEx** — Requires a user-provided expression matrix file (genes × samples
+   TSV). GTEx data is not available via cBioPortal.
+3. **Custom** — User-provided expression matrix TSV via `--expression-file`.
 
 ## Purpose
 Discover genes whose expression patterns correlate with a query gene, enabling:
@@ -48,7 +50,7 @@ Discover genes whose expression patterns correlate with a query gene, enabling:
 - **--dataset**: Source of expression data (choices: tcga, gtex, custom; default: tcga)
 - **--cancer-type**: TCGA project code (default: BRCA; ignored if dataset != tcga)
 - **--tissue**: GTEx tissue name (default: Breast_Mammary_Tissue; ignored if dataset != gtex)
-- **--expression-file**: Path to custom expression matrix TSV (required if dataset=custom)
+- **--expression-file**: Path to custom expression matrix TSV (required if dataset=custom or gtex)
 - **--method**: Correlation method (choices: pearson, spearman; default: pearson)
 - **--top-n**: Number of top co-expressed genes to report (default: 100)
 - **--fdr-cutoff**: FDR threshold for significance (default: 0.01)
@@ -63,51 +65,6 @@ Discover genes whose expression patterns correlate with a query gene, enabling:
 - `go_enrichment.tsv`: GO term enrichment results (if --run-go)
 - `go_bubble.png`: Bubble plot of GO enrichment (if --run-go)
 - `coexpression_summary.txt`: Summary statistics and parameters
-
-## Procedure
-
-### Step 1: Load Expression Data
-1. **TCGA path**: Query GDC API for STAR read counts for specified project
-   - Fetch log-normalized TPM values for top 200-500 samples
-   - Genes as rows, samples as columns
-2. **GTEx path**: Query GTEx API for tissue-specific expression
-   - Use `/expression/geneExpression` endpoint
-   - Filter for specified tissue
-3. **Custom path**: Load user-provided TSV (genes x samples, log-scale expression)
-
-### Step 2: Extract Query Gene
-1. Retrieve expression vector for query gene
-2. Remove samples with missing data
-3. Check for sufficient variance (skip if constant expression)
-
-### Step 3: Compute Correlations
-1. Vectorized correlation computation:
-   - For each gene, compute correlation with query gene across samples
-   - Pure numpy implementation for speed
-   - Skip genes with low variance
-2. Calculate p-values for correlations
-3. Filter for genes with valid correlation (exclude NaN/inf)
-
-### Step 4: Multiple Testing Correction
-1. Apply Benjamini-Hochberg FDR correction
-2. Filter by --fdr-cutoff
-3. Sort by absolute correlation value (|r|)
-
-### Step 5: Functional Enrichment (Optional)
-1. If --run-go flag:
-   - POST top-N gene list to Enrichr API (`addList` endpoint)
-   - Request GO Biological Process enrichment
-   - Parse results and compute adjusted p-values
-
-### Step 6: Network Visualization
-1. Build network graph from top-N genes
-2. Compute force-directed layout (spring layout using numpy)
-3. Node properties:
-   - Size proportional to |correlation|
-   - Color representing correlation sign (red=positive, blue=negative)
-4. Edge properties:
-   - Width proportional to |correlation| between connected genes
-   - Only draw edges for |r| > 0.3 (to reduce clutter)
 
 ## Key Execution Patterns
 
@@ -131,11 +88,12 @@ python scripts/coexpression_for_gene.py \
   --outdir results/tp53_luad
 ```
 
-### GTEx tissue-specific:
+### GTEx tissue-specific (requires local file):
 ```bash
 python scripts/coexpression_for_gene.py \
   --gene EGFR \
   --dataset gtex \
+  --expression-file gtex_lung_expression.tsv \
   --tissue Lung \
   --method spearman \
   --fdr-cutoff 0.001 \
@@ -153,17 +111,6 @@ python scripts/coexpression_for_gene.py \
   --outdir results/myc_custom
 ```
 
-### High-stringency analysis:
-```bash
-python scripts/coexpression_for_gene.py \
-  --gene KRAS \
-  --method spearman \
-  --fdr-cutoff 0.001 \
-  --top-n 50 \
-  --run-go \
-  --outdir results/kras_stringent
-```
-
 ## Parameter Decision Guide
 
 | Scenario | --dataset | --method | --fdr-cutoff | --top-n | --run-go |
@@ -179,24 +126,20 @@ python scripts/coexpression_for_gene.py \
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| "Gene not found in expression matrix" | Gene symbol not recognized | Verify HGNC symbol; check case sensitivity |
-| "Insufficient samples" | Dataset too small | Use larger dataset (TCGA > GTEx for sample size) |
-| "Download timeout" | Network issue | Use local --expression-file if available |
-| "GO enrichment timeout" | Enrichr API slow | Rerun with --run-go, or skip with --top-n < 5 |
-| "No significant correlations" | Gene not co-expressed with others | Lower --fdr-cutoff or check gene validity |
-| "Network visualization too dense" | Too many edges | Reduce --network-top-n or increase edge threshold |
-| "Memory error" | Large expression matrix | Subset genes beforehand or use GTEx (smaller) |
+| "Gene not found" | Gene symbol not in study | Verify HGNC symbol; try different cancer type |
+| "No mRNA expression profile" | Study lacks RNA-seq data | Try a different TCGA cohort |
+| "cBioPortal unreachable" | Network blocked | Use --dataset custom with local expression matrix |
+| "Insufficient samples" | Dataset too small | Use larger cohort (BRCA, LUAD have 500+ samples) |
+| "GO enrichment timeout" | Enrichr API slow | Rerun with --run-go, or skip |
+| "No significant correlations" | Gene not co-expressed | Lower --fdr-cutoff or check gene validity |
 
 ## Technical Notes
 
+- TCGA expression data: RNA-Seq V2 RSEM normalized values from cBioPortal PanCancer Atlas
 - Correlations computed only on samples with complete data for both genes
-- Gene variance threshold: requires SD > 0.01 in log scale to avoid spurious correlations
-- FDR correction uses Benjamini-Hochberg procedure (controls false positive rate)
-- Network layout: spring/force-directed layout using random walk sampling
-- Edges filtered to |r| > 0.3 to improve visualization clarity
-- All plots use matplotlib with high DPI (300); PNG output
+- Gene variance threshold: requires SD > 0.01 to avoid spurious correlations
+- FDR correction uses Benjamini-Hochberg procedure
+- Network layout: spring/force-directed layout
 - Pearson assumes linear relationships; Spearman is more robust to outliers
-- Results reproducible with same dataset and seed
 - GO enrichment uses Enrichr database (GO_Biological_Process_2023)
 - Minimum 30 samples recommended for reliable correlation estimates
-

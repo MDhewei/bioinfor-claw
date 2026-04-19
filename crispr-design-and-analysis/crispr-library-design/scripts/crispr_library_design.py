@@ -35,10 +35,47 @@ IUPAC_CODES = {
     "M": "AC",
 }
 
-# Simplified scoring based on nucleotide preferences (Doench 2016)
-DOENCH_WEIGHTS = {
-    1: {"T": 0.30, "G": -0.28, "C": -0.31, "A": 0.00},
-    2: {"A": -0.22, "G": 0.00, "C": -0.26, "T": 0.00},
+# ── Position-specific single-nucleotide weights (Doench et al. 2016, Rule Set 2)
+# Keys are 1-based positions within the 30-mer context (positions 5-24 = spacer).
+# Positive values favour on-target activity; negative penalise.
+DOENCH_SINGLE_NT = {
+    # --- spacer positions 1-20 (context positions 5-24) ---
+    #  pos  A       C       G       T
+     5: {"G": -0.2753},
+     6: {"A":  0.1081},
+     7: {"C": -0.0118, "T":  0.0736},
+     8: {"A":  0.0938, "G": -0.0170},
+     9: {},
+    10: {"A":  0.0372},
+    11: {"A":  0.0541},
+    12: {},
+    13: {"C": -0.0613},
+    14: {"G": -0.1000},
+    15: {},
+    16: {"A": -0.0109},
+    17: {"G":  0.0617},
+    18: {},
+    19: {"C": -0.1190},
+    20: {"G":  0.1316, "T": -0.1584},
+    21: {"T": -0.2279},
+    22: {"G": -0.0649, "T":  0.1326},
+    23: {"C":  0.1626},
+    24: {"G": -0.4075, "T":  0.7001},
+}
+
+# Position-specific dinucleotide weights (adjacent pairs in spacer, 1-based)
+DOENCH_DINUC = {
+    # (spacer_pos, dinucleotide): weight
+    ( 5, "GT"): -0.6257,
+    ( 7, "GC"):  0.3004,
+    ( 8, "AA"): -0.8348,
+    (14, "GG"): -0.5873,
+    (17, "TT"): -0.3372,
+    (19, "GG"):  0.1715,
+    (20, "TA"): -0.4008,
+    (21, "GG"):  0.2458,
+    (22, "TC"):  0.2224,
+    (23, "TT"): -0.6847,
 }
 
 
@@ -97,30 +134,60 @@ def check_problematic_sequences(seq: str) -> bool:
 
 
 def score_sgrna_doench(spacer: str, gc_content: float) -> float:
+    """Score sgRNA using a simplified Doench et al. 2016 Rule Set 2 model.
+
+    Features used (mirrors the published logistic-regression model):
+      1. Position-specific single-nucleotide weights (20 spacer positions)
+      2. Position-specific dinucleotide weights (adjacent pairs)
+      3. GC content penalty (quadratic, optimal around 40-70%)
+      4. Seed-region (positions 17-20) GC penalty
+
+    Returns a score in [0, 1] where higher = predicted higher on-target activity.
     """
-    Score sgRNA using simplified Doench 2016 model.
-    """
-    score = 0.5  # Baseline
+    spacer = spacer.upper()
+    n = len(spacer)
 
-    # GC content penalty
-    gc_penalty = abs(gc_content - 0.5)
-    score -= gc_penalty * 0.3
+    # --- intercept ---
+    raw = 0.5976  # logistic intercept (Doench 2016 Table S3)
 
-    # Position-specific nucleotide weights (simplified)
-    for pos in [0, 1]:
-        if pos < len(spacer) and pos in DOENCH_WEIGHTS:
-            base = spacer[pos]
-            score += DOENCH_WEIGHTS[pos].get(base, 0.0)
+    # --- 1. Single-nucleotide weights ---
+    for ctx_pos in range(5, 25):
+        sp_idx = ctx_pos - 5  # 0-based index in spacer
+        if sp_idx >= n:
+            break
+        base = spacer[sp_idx]
+        wt = DOENCH_SINGLE_NT.get(ctx_pos, {}).get(base, 0.0)
+        raw += wt
 
-    # Seed region quality (17-20)
-    seed = spacer[-4:].upper()
+    # --- 2. Dinucleotide weights ---
+    for (ctx_pos, dinuc), wt in DOENCH_DINUC.items():
+        sp_idx = ctx_pos - 5
+        if sp_idx + 1 >= n:
+            continue
+        if spacer[sp_idx] + spacer[sp_idx + 1] == dinuc:
+            raw += wt
+
+    # --- 3. GC content (quadratic penalty, optimal ~55%) ---
+    raw -= 0.2026 * abs(gc_content - 0.55)
+    if gc_content < 0.3 or gc_content > 0.75:
+        raw -= 0.15  # harsh penalty outside usable range
+
+    # --- 4. Seed region GC (positions 17-20 of spacer, 0-based 16-19) ---
+    seed = spacer[-4:] if n >= 4 else spacer
     seed_gc = calculate_gc(seed)
-    if 0.25 <= seed_gc <= 0.75:
-        score += 0.2
-    else:
-        score -= 0.1
+    if seed_gc > 0.75:
+        raw -= 0.15   # too GC-rich seed → poor specificity
+    elif seed_gc < 0.25:
+        raw -= 0.08   # too AT-rich seed → weaker binding
 
-    return max(0.0, min(1.0, score))
+    # --- 5. Homopolymer penalty ---
+    for base in "ACGT":
+        if base * 4 in spacer:
+            raw -= 0.10
+
+    # Logistic squash to [0, 1]
+    score = 1.0 / (1.0 + np.exp(-raw))
+    return float(score)
 
 
 def fetch_gene_sequence_ensembl(

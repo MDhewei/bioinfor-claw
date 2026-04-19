@@ -1690,14 +1690,17 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
         output_files = []
-        for f in sorted(out_dir.iterdir()):
+        for f in sorted(out_dir.rglob('*')):
+            if not f.is_file():
+                continue
             if input_path and f.name == input_path.name:
                 continue
+            rel = f.relative_to(out_dir)
             ext = f.suffix.lstrip('.').upper()
             output_files.append({
-                'name': f.name,
+                'name': str(rel),
                 'size': f.stat().st_size,
-                'url':  f'/api/results/{run_id}/{f.name}',
+                'url':  f'/api/results/{run_id}/{rel}',
                 'ext':  ext,
             })
 
@@ -1716,7 +1719,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── Tool: list_files ───────────────────────────────────────────────────
     def _tool_list_files(self, args):
-        """List files in a results run directory. args: {run_id: str}."""
+        """List files in a results run directory (recursive). args: {run_id: str}."""
         run_id = (args.get('run_id') or '').strip().strip('/')
         if not run_id or '..' in run_id or '/' in run_id:
             return {'success': False, 'error': 'invalid run_id'}
@@ -1724,12 +1727,13 @@ class Handler(BaseHTTPRequestHandler):
         if not d.exists() or not d.is_dir():
             return {'success': False, 'error': f'run_id not found: {run_id}'}
         files = []
-        for f in sorted(d.iterdir()):
+        for f in sorted(d.rglob('*')):
             if f.is_file():
+                rel = f.relative_to(d)
                 files.append({
-                    'name': f.name,
+                    'name': str(rel),
                     'size': f.stat().st_size,
-                    'url':  f'/api/results/{run_id}/{f.name}',
+                    'url':  f'/api/results/{run_id}/{rel}',
                     'ext':  f.suffix.lstrip('.').upper(),
                 })
         return {'success': True, 'run_id': run_id, 'files': files,
@@ -1744,9 +1748,60 @@ class Handler(BaseHTTPRequestHandler):
         max_bytes = int(args.get('max_bytes') or 8000)
         if not run_id or not fname or '..' in run_id or '..' in fname:
             return {'success': False, 'error': 'invalid run_id or filename'}
-        fpath = self.results_dir / run_id / fname
+        run_dir = self.results_dir / run_id
+        fpath = run_dir / fname
         if not fpath.exists() or not fpath.is_file():
-            return {'success': False, 'error': f'file not found: {run_id}/{fname}'}
+            # Fuzzy fallback 1: search for basename anywhere in the run directory
+            basename = Path(fname).name
+            candidates = list(run_dir.rglob(basename)) if run_dir.is_dir() else []
+            if len(candidates) == 1:
+                fpath = candidates[0]
+                fname = str(fpath.relative_to(run_dir))
+            elif len(candidates) > 1:
+                return {'success': False,
+                        'error': f'file not found at {run_id}/{fname}; '
+                                 f'multiple matches for "{basename}": '
+                                 + ', '.join(str(c.relative_to(run_dir)) for c in candidates[:5])}
+            else:
+                # Fuzzy fallback 2: search ALL recent run directories for this file
+                # (handles wrong run_id from LLM hallucination)
+                global_candidates = []
+                try:
+                    for d in sorted(self.results_dir.iterdir(), reverse=True):
+                        if not d.is_dir() or d.name.startswith('_'):
+                            continue
+                        match = d / basename
+                        if match.exists() and match.is_file():
+                            global_candidates.append((d.name, match))
+                        else:
+                            # Also check subdirs
+                            for m in d.rglob(basename):
+                                if m.is_file():
+                                    global_candidates.append((d.name, m))
+                                    break
+                        if len(global_candidates) >= 3:
+                            break
+                except Exception:
+                    pass
+
+                if len(global_candidates) == 1:
+                    # Auto-resolve: found in exactly one other run dir
+                    found_run_id, fpath = global_candidates[0]
+                    run_id = found_run_id
+                    run_dir = self.results_dir / run_id
+                    fname = str(fpath.relative_to(run_dir))
+                    print(f"  [read_file] Auto-resolved {basename} → {run_id}/{fname}")
+                elif global_candidates:
+                    return {'success': False,
+                            'error': f'file not found in {run_id}; found "{basename}" in other runs: '
+                                     + ', '.join(f'{rid}/{f.relative_to(self.results_dir / rid)}'
+                                                 for rid, f in global_candidates)}
+                else:
+                    avail = [str(f.relative_to(run_dir))
+                             for f in sorted(run_dir.rglob('*')) if f.is_file()] if run_dir.is_dir() else []
+                    return {'success': False,
+                            'error': f'file not found: {run_id}/{fname}',
+                            'available_files': avail[:20]}
         size = fpath.stat().st_size
         TEXT_EXTS = {'.txt', '.csv', '.tsv', '.json', '.md', '.log', '.html',
                      '.xml', '.yaml', '.yml', '.bed', '.gff', '.gtf', '.vcf',
@@ -2076,6 +2131,75 @@ class Handler(BaseHTTPRequestHandler):
             if w not in NON_GENES:
                 return w
         return None
+
+    @staticmethod
+    def _extract_gene_list_from_text(text):
+        """Extract a multi-gene list from user text (pasted in chatbox).
+
+        Detects patterns like:
+          - One gene per line (newline-separated)
+          - Space-separated gene symbols
+          - Comma-separated gene symbols
+          - Mixed separators
+
+        Returns a list of cleaned gene symbols, or empty list if the text
+        doesn't look like a gene list (< 3 gene-like tokens).
+        """
+        import re as _re
+        if not text:
+            return []
+
+        # Words that look like genes but aren't
+        NON_GENES = {
+            'TCGA','GTEX','GEO','RNA','DNA','CNV','MAF','API','CSV','TSV',
+            'PDF','PNG','SVG','URL','AND','FOR','THE','WITH','FROM','NOT',
+            'USE','ALL','TOP','LOW','HIGH','SHOW','PLOT','RUN','GET','SET',
+            'CHECK','EXPRESSION','NORMAL','TISSUE','CANCER','GENE','GENES',
+            'ANALYSIS','DATA','DOWNLOAD','SEARCH','FIND','LOOK','QUERY',
+            'ABOUT','PAN','MODE','HELP','WHAT','HOW','TRUE','FALSE','NONE',
+            'DESIGN','LIBRARY','SGRNA','GUIDE','CRISPR','CAS9','HUMAN',
+            'MOUSE','SPECIES','ENRICHMENT','PATHWAY','NETWORK','PLEASE',
+            'BUBBLE','LIST','FILE','MAKE','CREATE','GENERATE','HELP','ME',
+            'CAN','YOU','THIS','THAT','THESE','THOSE','THEM','HERE',
+            'IN','OF','TO','BY','IS','AS','AT','BE','IT','IF','OR','ON','AN',
+        }
+
+        # Remove the instruction part (e.g. "help me design sgRNA library for
+        # the gene list") — keep only the gene-list-looking block.
+        # Split on common instruction phrases
+        lines = text.strip().split('\n')
+
+        # Collect candidate gene symbols
+        candidates = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Split on whitespace, commas, semicolons, tabs
+            tokens = _re.split(r'[\s,;\t]+', line)
+            for tok in tokens:
+                tok = tok.strip().strip('"').strip("'")
+                if not tok:
+                    continue
+                # Gene symbol pattern: starts with letter, alphanumeric + hyphens/dots
+                # Typical: TP53, BRCA1, C11orf88, RP11-382A20.3, 1-Mar (Excel-corrupted)
+                if _re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,20}$', tok):
+                    upper = tok.upper()
+                    if upper not in NON_GENES and len(tok) >= 2:
+                        candidates.append(tok)
+
+        # Heuristic: if at least 3 tokens look gene-like, treat as gene list
+        if len(candidates) >= 3:
+            # Deduplicate while preserving order
+            seen = set()
+            unique = []
+            for g in candidates:
+                gu = g.upper()
+                if gu not in seen:
+                    seen.add(gu)
+                    unique.append(g)
+            return unique
+        return []
 
     @staticmethod
     def _extract_cancer_type(text):
@@ -2697,6 +2821,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── Resolve input file ──────────────────────────────────────────────
         # Priority: uploaded_path (pre-uploaded to server) > inline input_data
+        #         > gene list extracted from conversation text
         input_path = None
         uploaded_path = req.get('uploaded_path')
         if uploaded_path and Path(uploaded_path).exists():
@@ -2706,10 +2831,22 @@ class Handler(BaseHTTPRequestHandler):
             input_path = out_dir / input_fname
             input_path.write_text(str(input_text), encoding='utf-8')
             print(f"  [agent] Wrote inline file: {input_path} ({len(input_text)} chars)")
+        else:
+            # ── Auto-extract gene list from conversation text ──────────────
+            # When the user pastes a gene list directly in the chatbox (not as
+            # a file attachment), extract gene symbols and save to a temp file.
+            # This enables skills like crispr-library-design, GO enrichment,
+            # etc. to work with inline gene lists.
+            extracted_genes = self._extract_gene_list_from_text(latest_user or conv_text)
+            if extracted_genes and len(extracted_genes) >= 3:
+                input_path = out_dir / 'gene_list.txt'
+                input_path.write_text('\n'.join(extracted_genes), encoding='utf-8')
+                print(f"  [agent] Extracted {len(extracted_genes)} genes from chat → {input_path}")
 
         # Detect which flag the script uses for input files
-        INPUT_FLAG_CANDIDATES = ['input', 'data', 'file', 'counts', 'gene-file',
-                                  'input-file', 'matrix', 'table']
+        INPUT_FLAG_CANDIDATES = ['input', 'genes', 'data', 'file', 'counts',
+                                  'gene-file', 'gene-list', 'input-file',
+                                  'matrix', 'table']
         input_flag = None
         if input_path:
             for cand in INPUT_FLAG_CANDIDATES:
@@ -3054,16 +3191,19 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as _e:
             print(f"  [rescue] Error during file rescue: {_e}")
 
-        # Collect output files (skip the input file we wrote)
+        # Collect output files recursively (skip the input file we wrote)
         output_files = []
-        for f in sorted(out_dir.iterdir()):
+        for f in sorted(out_dir.rglob('*')):
+            if not f.is_file():
+                continue
             if input_path and f.name == input_path.name:
                 continue
+            rel = f.relative_to(out_dir)
             ext = f.suffix.lstrip('.').upper()
             output_files.append({
-                'name': f.name,
+                'name': str(rel),
                 'size': f.stat().st_size,
-                'url':  f'/api/results/{run_id}/{f.name}',
+                'url':  f'/api/results/{run_id}/{rel}',
                 'ext':  ext,
                 'type': ext,
             })

@@ -21,7 +21,7 @@ INSTITUTIONS_URL = f"{OPENALEX_BASE}/institutions"
 SESSION = requests.Session()
 SESSION.headers.update(
     {
-        "User-Agent": "search-big-labs-by-field/8.0",
+        "User-Agent": "search-big-labs-by-field/8.0 (mailto:bioinfor-claw@users.noreply.github.com)",
         "Accept-Language": "en-US,en;q=0.9",
     }
 )
@@ -236,7 +236,7 @@ def fetch_works_for_keyword(
             break
         if page > (count // max(per_page, 1)) + 3:
             break
-        time.sleep(0.4)
+        time.sleep(0.12)
 
     return works[:max_works]
 
@@ -465,7 +465,7 @@ def fetch_top_works_for_author(
         page += 1
         if page > (count // max(per_page, 1)) + 3:
             break
-        time.sleep(0.3)
+        time.sleep(0.12)
 
     return works[:max_works]
 
@@ -613,6 +613,183 @@ def diversify_by_paper_overlap(
     return selected
 
 
+def _profile_one_candidate(
+    rec: dict,
+    idx: int,
+    total: int,
+    keyword: str,
+    keyword_terms: List[str],
+    author_works_limit: int,
+    max_authors_per_paper: int,
+) -> Optional[dict]:
+    """Profile a single candidate PI — designed to run in a thread pool."""
+    author_id = rec["author_id"]
+    print(f"[INFO] profiling {idx}/{total}: {rec['author_name']}", file=sys.stderr)
+
+    try:
+        detail = fetch_author_details(author_id)
+    except Exception as e:
+        print(f"[WARN] failed author detail for {author_id}: {e}", file=sys.stderr)
+        return None
+
+    current_inst_name = top_key_from_counter_dict(rec["institutions_seen"])
+    current_inst_id = top_key_from_counter_dict(rec["institution_ids_seen"])
+    current_country = top_key_from_counter_dict(rec["countries_seen"])
+
+    author_topics = detail.get("topics", []) or []
+    topic_share = detail.get("topic_share", []) or []
+    topic_text = flatten_topics(author_topics, n=5)
+    topic_share_text = flatten_topics(topic_share, n=5)
+
+    inst_homepage = ""
+    inst_type = ""
+    inst_ror = ""
+    city = ""
+    if current_inst_id:
+        try:
+            inst = fetch_institution_details(current_inst_id)
+            inst_homepage = normalize_space(inst.get("homepage_url", ""))
+            inst_type = normalize_space(inst.get("type", ""))
+            inst_ror = normalize_space(inst.get("ror", ""))
+            geo = inst.get("geo") or {}
+            city = normalize_space(geo.get("city", ""))
+            if not current_country:
+                current_country = normalize_space(inst.get("country_code", ""))
+        except Exception as e:
+            print(f"[WARN] failed institution detail for {current_inst_id}: {e}", file=sys.stderr)
+
+    try:
+        author_works_10y = fetch_top_works_for_author(
+            author_id=author_id,
+            years_back=10,
+            max_works=author_works_limit,
+            max_authors_per_paper=max_authors_per_paper,
+        )
+    except Exception as e:
+        print(f"[WARN] failed recent works for {author_id}: {e}", file=sys.stderr)
+        author_works_10y = []
+
+    relevant_works_10y = filter_works_relevant_to_keyword(author_works_10y, keyword_terms)
+
+    current_year = pd.Timestamp.today().year
+    works_last_10y = [w for w in author_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 9]
+    works_last_5y = [w for w in author_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 4]
+    works_last_3y = [w for w in author_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 2]
+
+    relevant_last_10y = [w for w in relevant_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 9]
+    relevant_last_5y = [w for w in relevant_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 4]
+    relevant_last_3y = [w for w in relevant_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 2]
+
+    year_dist = build_year_counter(works_last_10y)
+
+    top_cited_overall_10y = sorted(
+        works_last_10y,
+        key=lambda x: int(x.get("cited_by_count", 0) or 0),
+        reverse=True,
+    )
+    top_recent_overall = sorted(
+        works_last_5y,
+        key=lambda x: (
+            int(x.get("publication_year", 0) or 0),
+            int(x.get("cited_by_count", 0) or 0),
+        ),
+        reverse=True,
+    )
+    top_relevant = sorted(
+        relevant_works_10y,
+        key=lambda x: (
+            score_work_relevance(x, keyword_terms),
+            int(x.get("cited_by_count", 0) or 0),
+        ),
+        reverse=True,
+    )
+
+    main_methods, main_topics = extract_main_methods_and_topics(topic_text + " " + topic_share_text, relevant_works_10y)
+
+    lab_text = " ".join(
+        [
+            normalize_space(detail.get("display_name", "")),
+            current_inst_name,
+            topic_text,
+            topic_share_text,
+            main_methods,
+            main_topics,
+        ]
+    )
+    lab_type = infer_lab_type(lab_text)
+
+    final_score = author_relevance_final_score(
+        author_rec=rec,
+        author_detail=detail,
+    )
+
+    summary_parts = [
+        f"Relevant to {keyword}.",
+        f"Overall impact: {detail.get('cited_by_count', 0)} total citations and {detail.get('works_count', 0)} total works in OpenAlex.",
+        f"Recent output: {len(works_last_10y)} papers in last 10 years, {len(works_last_5y)} in last 5 years, {len(works_last_3y)} in last 3 years.",
+        f"Keyword-relevant output: {len(relevant_last_10y)} papers in last 10 years and {len(relevant_last_5y)} in last 5 years.",
+        f"PI-like authorship evidence: last-author={rec.get('last_author_count', 0)}, first/last-author={rec.get('first_last_author_count', 0)}.",
+    ]
+    if main_methods:
+        summary_parts.append(f"Likely strengths include {main_methods}.")
+    if main_topics:
+        summary_parts.append(f"Main topical areas include {main_topics}.")
+    research_summary = normalize_space(" ".join(summary_parts))
+
+    return {
+        "query_keyword": keyword,
+        "lab_name": f"{normalize_space(detail.get('display_name', ''))} Lab" if normalize_space(detail.get("display_name", "")) else "",
+        "pi_name": normalize_space(detail.get("display_name", "")),
+        "openalex_author_id": normalize_space(detail.get("id", "")),
+        "orcid": normalize_space(detail.get("orcid", "")),
+        "institution_name": current_inst_name,
+        "institution_openalex_id": current_inst_id,
+        "institution_ror": inst_ror,
+        "institution_type": inst_type,
+        "city": city,
+        "country_code": current_country,
+        "institution_homepage": inst_homepage,
+        "works_count_total": detail.get("works_count", ""),
+        "cited_by_count_total": detail.get("cited_by_count", ""),
+        "overall_works_count": detail.get("works_count", ""),
+        "overall_cited_by_count": detail.get("cited_by_count", ""),
+        "query_relevant_works_count": rec.get("query_relevant_works_count", 0),
+        "query_total_citations_from_relevant_works": rec.get("query_total_citations_from_relevant_works", 0),
+        "last_author_count": rec.get("last_author_count", 0),
+        "first_author_count": rec.get("first_author_count", 0),
+        "first_last_author_count": rec.get("first_last_author_count", 0),
+        "matched_keyword_terms": "; ".join(sorted(rec.get("matched_keyword_terms", set()))),
+        "top_topics": topic_text,
+        "topic_share": topic_share_text,
+        "lab_type": lab_type,
+        "main_methods": main_methods,
+        "main_topics": main_topics,
+        "research_summary": research_summary,
+        "publications_last_10y": len(works_last_10y),
+        "publications_last_5y": len(works_last_5y),
+        "publications_last_3y": len(works_last_3y),
+        "keyword_relevant_papers_last_10y": len(relevant_last_10y),
+        "keyword_relevant_papers_last_5y": len(relevant_last_5y),
+        "keyword_relevant_papers_last_3y": len(relevant_last_3y),
+        "publication_year_distribution_last_10y": stringify_year_distribution(year_dist, top_n=10),
+        "representative_papers_overall_10y": stringify_works(top_cited_overall_10y, top_n=5),
+        "representative_keyword_relevant_papers": stringify_works(top_relevant, top_n=5),
+        "recent_papers_last_5y": stringify_works(top_recent_overall, top_n=5),
+        "representative_papers_overall_10y_dois": ";".join(
+            [normalize_space(w.get("doi", "")) for w in top_cited_overall_10y[:5] if normalize_space(w.get("doi", ""))]
+        ),
+        "representative_keyword_relevant_papers_dois": ";".join(
+            [normalize_space(w.get("doi", "")) for w in top_relevant[:5] if normalize_space(w.get("doi", ""))]
+        ),
+        "recent_papers_last_5y_dois": ";".join(
+            [normalize_space(w.get("doi", "")) for w in top_recent_overall[:5] if normalize_space(w.get("doi", ""))]
+        ),
+        "relevance_score": final_score,
+        "source_summary": "OpenAlex works + authors + institutions",
+        "_original_idx": idx,  # preserve original rank for sorting
+    }
+
+
 def build_lab_rows(
     author_candidates: Dict[str, dict],
     keyword: str,
@@ -621,6 +798,8 @@ def build_lab_rows(
     author_works_limit: int,
     max_authors_per_paper: int,
 ) -> List[dict]:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     ranked = sorted(
         author_candidates.values(),
         key=lambda x: (
@@ -632,178 +811,38 @@ def build_lab_rows(
         reverse=True,
     )[: min(top_n * 3, 120)]
 
-    rows = []
     keyword_terms = parse_keywords(keyword)
+    total = len(ranked)
 
-    print(f"[INFO] building lab profiles for {len(ranked)} candidate PIs...", file=sys.stderr)
+    # Use up to 8 threads for parallel API requests (OpenAlex is generous with
+    # rate limits — up to 10 req/s for polite pool with User-Agent header).
+    n_workers = min(8, total)
+    print(f"[INFO] building lab profiles for {total} candidate PIs "
+          f"({n_workers} parallel workers)...", file=sys.stderr)
 
-    for idx, rec in enumerate(ranked, start=1):
-        author_id = rec["author_id"]
-        print(f"[INFO] profiling {idx}/{len(ranked)}: {rec['author_name']}", file=sys.stderr)
-
-        try:
-            detail = fetch_author_details(author_id)
-        except Exception as e:
-            print(f"[WARN] failed author detail for {author_id}: {e}", file=sys.stderr)
-            continue
-
-        current_inst_name = top_key_from_counter_dict(rec["institutions_seen"])
-        current_inst_id = top_key_from_counter_dict(rec["institution_ids_seen"])
-        current_country = top_key_from_counter_dict(rec["countries_seen"])
-
-        author_topics = detail.get("topics", []) or []
-        topic_share = detail.get("topic_share", []) or []
-        topic_text = flatten_topics(author_topics, n=5)
-        topic_share_text = flatten_topics(topic_share, n=5)
-
-        inst_homepage = ""
-        inst_type = ""
-        inst_ror = ""
-        city = ""
-        if current_inst_id:
-            try:
-                inst = fetch_institution_details(current_inst_id)
-                inst_homepage = normalize_space(inst.get("homepage_url", ""))
-                inst_type = normalize_space(inst.get("type", ""))
-                inst_ror = normalize_space(inst.get("ror", ""))
-                geo = inst.get("geo") or {}
-                city = normalize_space(geo.get("city", ""))
-                if not current_country:
-                    current_country = normalize_space(inst.get("country_code", ""))
-            except Exception as e:
-                print(f"[WARN] failed institution detail for {current_inst_id}: {e}", file=sys.stderr)
-
-        try:
-            author_works_10y = fetch_top_works_for_author(
-                author_id=author_id,
-                years_back=10,
-                max_works=author_works_limit,
-                max_authors_per_paper=max_authors_per_paper,
-            )
-        except Exception as e:
-            print(f"[WARN] failed recent works for {author_id}: {e}", file=sys.stderr)
-            author_works_10y = []
-
-        relevant_works_10y = filter_works_relevant_to_keyword(author_works_10y, keyword_terms)
-
-        current_year = pd.Timestamp.today().year
-        works_last_10y = [w for w in author_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 9]
-        works_last_5y = [w for w in author_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 4]
-        works_last_3y = [w for w in author_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 2]
-
-        relevant_last_10y = [w for w in relevant_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 9]
-        relevant_last_5y = [w for w in relevant_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 4]
-        relevant_last_3y = [w for w in relevant_works_10y if isinstance(w.get("publication_year"), int) and w["publication_year"] >= current_year - 2]
-
-        year_dist = build_year_counter(works_last_10y)
-
-        top_cited_overall_10y = sorted(
-            works_last_10y,
-            key=lambda x: int(x.get("cited_by_count", 0) or 0),
-            reverse=True,
-        )
-        top_recent_overall = sorted(
-            works_last_5y,
-            key=lambda x: (
-                int(x.get("publication_year", 0) or 0),
-                int(x.get("cited_by_count", 0) or 0),
-            ),
-            reverse=True,
-        )
-        top_relevant = sorted(
-            relevant_works_10y,
-            key=lambda x: (
-                score_work_relevance(x, keyword_terms),
-                int(x.get("cited_by_count", 0) or 0),
-            ),
-            reverse=True,
-        )
-
-        main_methods, main_topics = extract_main_methods_and_topics(topic_text + " " + topic_share_text, relevant_works_10y)
-
-        lab_text = " ".join(
-            [
-                normalize_space(detail.get("display_name", "")),
-                current_inst_name,
-                topic_text,
-                topic_share_text,
-                main_methods,
-                main_topics,
-            ]
-        )
-        lab_type = infer_lab_type(lab_text)
-
-        final_score = author_relevance_final_score(
-            author_rec=rec,
-            author_detail=detail,
-        )
-
-        summary_parts = [
-            f"Relevant to {keyword}.",
-            f"Overall impact: {detail.get('cited_by_count', 0)} total citations and {detail.get('works_count', 0)} total works in OpenAlex.",
-            f"Recent output: {len(works_last_10y)} papers in last 10 years, {len(works_last_5y)} in last 5 years, {len(works_last_3y)} in last 3 years.",
-            f"Keyword-relevant output: {len(relevant_last_10y)} papers in last 10 years and {len(relevant_last_5y)} in last 5 years.",
-            f"PI-like authorship evidence: last-author={rec.get('last_author_count', 0)}, first/last-author={rec.get('first_last_author_count', 0)}.",
-        ]
-        if main_methods:
-            summary_parts.append(f"Likely strengths include {main_methods}.")
-        if main_topics:
-            summary_parts.append(f"Main topical areas include {main_topics}.")
-        research_summary = normalize_space(" ".join(summary_parts))
-
-        row = {
-            "query_keyword": keyword,
-            "lab_name": f"{normalize_space(detail.get('display_name', ''))} Lab" if normalize_space(detail.get("display_name", "")) else "",
-            "pi_name": normalize_space(detail.get("display_name", "")),
-            "openalex_author_id": normalize_space(detail.get("id", "")),
-            "orcid": normalize_space(detail.get("orcid", "")),
-            "institution_name": current_inst_name,
-            "institution_openalex_id": current_inst_id,
-            "institution_ror": inst_ror,
-            "institution_type": inst_type,
-            "city": city,
-            "country_code": current_country,
-            "institution_homepage": inst_homepage,
-            "works_count_total": detail.get("works_count", ""),
-            "cited_by_count_total": detail.get("cited_by_count", ""),
-            "overall_works_count": detail.get("works_count", ""),
-            "overall_cited_by_count": detail.get("cited_by_count", ""),
-            "query_relevant_works_count": rec.get("query_relevant_works_count", 0),
-            "query_total_citations_from_relevant_works": rec.get("query_total_citations_from_relevant_works", 0),
-            "last_author_count": rec.get("last_author_count", 0),
-            "first_author_count": rec.get("first_author_count", 0),
-            "first_last_author_count": rec.get("first_last_author_count", 0),
-            "matched_keyword_terms": "; ".join(sorted(rec.get("matched_keyword_terms", set()))),
-            "top_topics": topic_text,
-            "topic_share": topic_share_text,
-            "lab_type": lab_type,
-            "main_methods": main_methods,
-            "main_topics": main_topics,
-            "research_summary": research_summary,
-            "publications_last_10y": len(works_last_10y),
-            "publications_last_5y": len(works_last_5y),
-            "publications_last_3y": len(works_last_3y),
-            "keyword_relevant_papers_last_10y": len(relevant_last_10y),
-            "keyword_relevant_papers_last_5y": len(relevant_last_5y),
-            "keyword_relevant_papers_last_3y": len(relevant_last_3y),
-            "publication_year_distribution_last_10y": stringify_year_distribution(year_dist, top_n=10),
-            "representative_papers_overall_10y": stringify_works(top_cited_overall_10y, top_n=5),
-            "representative_keyword_relevant_papers": stringify_works(top_relevant, top_n=5),
-            "recent_papers_last_5y": stringify_works(top_recent_overall, top_n=5),
-            "representative_papers_overall_10y_dois": ";".join(
-                [normalize_space(w.get("doi", "")) for w in top_cited_overall_10y[:5] if normalize_space(w.get("doi", ""))]
-            ),
-            "representative_keyword_relevant_papers_dois": ";".join(
-                [normalize_space(w.get("doi", "")) for w in top_relevant[:5] if normalize_space(w.get("doi", ""))]
-            ),
-            "recent_papers_last_5y_dois": ";".join(
-                [normalize_space(w.get("doi", "")) for w in top_recent_overall[:5] if normalize_space(w.get("doi", ""))]
-            ),
-            "relevance_score": final_score,
-            "source_summary": "OpenAlex works + authors + institutions",
+    rows = []
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {
+            pool.submit(
+                _profile_one_candidate,
+                rec, idx, total, keyword, keyword_terms,
+                author_works_limit, max_authors_per_paper,
+            ): idx
+            for idx, rec in enumerate(ranked, start=1)
         }
-        rows.append(row)
-        time.sleep(sleep_seconds)
+        for future in as_completed(futures):
+            try:
+                row = future.result()
+                if row is not None:
+                    rows.append(row)
+            except Exception as e:
+                idx = futures[future]
+                print(f"[WARN] candidate {idx} raised: {e}", file=sys.stderr)
+
+    # Restore original ranking order
+    rows.sort(key=lambda r: r.get("_original_idx", 0))
+    for r in rows:
+        r.pop("_original_idx", None)
 
     return rows
 
