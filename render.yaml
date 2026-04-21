@@ -2,7 +2,7 @@ services:
   - type: web
     name: bioinfor-claw
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: apt-get update && apt-get install -y fonts-liberation && pip install -r requirements.txt
     startCommand: python run_bioinfor_claw.py --no-browser
     envVars:
       - key: PYTHON_VERSION
