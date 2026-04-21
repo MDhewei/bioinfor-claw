@@ -1144,6 +1144,7 @@ _analytics_lock = _threading.Lock()
 _analytics = {
     'total_analyses': 0,
     'total_visits': 0,
+    'unique_ips': [],           # list of unique IP hashes (all time)
     'visitors_today': {},       # ip -> timestamp
     'analyses_today': {},       # ip -> count
     'genes_searched': {},       # gene -> count (all time)
@@ -1153,6 +1154,7 @@ _analytics = {
     'user_locations': {},       # "lat,lng" -> {lat, lng, count, city, country}
     'start_time': datetime.now().isoformat(),
 }
+_unique_ip_set = set()  # fast lookup mirror of unique_ips list
 _ANALYTICS_FILE = None  # set in main()
 
 def _save_analytics():
@@ -1174,12 +1176,14 @@ def _load_analytics():
     if _ANALYTICS_FILE and _ANALYTICS_FILE.exists():
         try:
             data = _json.loads(_ANALYTICS_FILE.read_text(encoding='utf-8'))
-            for k in ('total_analyses', 'total_visits', 'genes_searched',
+            for k in ('total_analyses', 'total_visits', 'unique_ips', 'genes_searched',
                       'skills_used', 'recent_analyses', 'daily_history',
                       'user_locations', 'start_time'):
                 if k in data:
                     _analytics[k] = data[k]
-            print(f"  📊  Loaded analytics: {_analytics['total_analyses']} analyses, {_analytics['total_visits']} visits")
+            # Rebuild the fast-lookup set from persisted list
+            _unique_ip_set.update(_analytics.get('unique_ips', []))
+            print(f"  📊  Loaded analytics: {_analytics['total_analyses']} analyses, {len(_unique_ip_set)} unique users")
         except Exception as e:
             print(f"  [analytics] load error: {e}")
 
@@ -1204,9 +1208,15 @@ _geo_cache = {}  # ip -> geo result (avoid repeated lookups)
 def _track_visit(ip):
     """Track a page visit."""
     today = datetime.now().strftime('%Y-%m-%d')
+    # Hash IP for privacy-safe unique tracking
+    ip_hash = str(hash(ip))[-8:]
     with _analytics_lock:
         _analytics['total_visits'] += 1
         _analytics['visitors_today'][ip] = datetime.now().isoformat()
+        # Track unique users
+        if ip_hash not in _unique_ip_set:
+            _unique_ip_set.add(ip_hash)
+            _analytics['unique_ips'].append(ip_hash)
         # Daily history
         if today not in _analytics['daily_history']:
             _analytics['daily_history'][today] = {'visits': 0, 'analyses': 0}
@@ -1333,6 +1343,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({
                 'total_analyses': _analytics['total_analyses'],
                 'total_visits': _analytics['total_visits'],
+                'unique_users': len(_unique_ip_set),
                 'visitors_today': visitors_today,
                 'analyses_today': analyses_today,
                 'top_genes': top_genes,

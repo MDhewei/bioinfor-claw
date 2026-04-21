@@ -1346,7 +1346,7 @@ async function refreshLiveStats(){
     const rpg=document.getElementById('rpStatGene');
     if(rpg) rpg.textContent=(d.top_genes&&d.top_genes.length)?d.top_genes[0][0]:'-';
     // Hero stats (animated count-up)
-    animateCount('heroUsers',d.total_visits||0);
+    animateCount('heroUsers',d.unique_users||d.total_visits||0);
     animateCount('heroAnalyses',d.total_analyses||0);
   }catch(e){console.log('[liveStats]',e);}
 }
