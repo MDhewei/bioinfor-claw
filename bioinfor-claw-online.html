@@ -124,6 +124,13 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 .rp-news-date{font-size:10px;color:#94a3b8;}
 .rp-news-title{font-size:12px;font-weight:600;color:#334155;margin-top:2px;}
 .rp-ad-slot{background:linear-gradient(135deg,#f8fafc,#f1f5f9);border:1px dashed #cbd5e1;border-radius:10px;padding:20px;text-align:center;color:#94a3b8;font-size:11px;min-height:120px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;}
+.game-tab{padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:11px;font-weight:600;color:#475569;transition:all .2s;}
+.game-tab:hover{background:#f0fdf4;border-color:var(--g400);}
+.game-tab.active{background:var(--g700);color:#fff;border-color:var(--g700);}
+.dna-card{width:100%;aspect-ratio:1;border:2px solid var(--border);border-radius:8px;font-size:20px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;background:#f8fafc;transition:all .3s;user-select:none;}
+.dna-card.flipped{border-color:var(--g500);background:#f0fdf4;}
+.dna-card.matched{border-color:#22c55e;background:#dcfce7;opacity:.7;pointer-events:none;}
+.dna-card:not(.flipped):not(.matched):hover{background:#f1f5f9;border-color:#94a3b8;}
 .rp-stats-row{display:flex;justify-content:space-between;padding:6px 0;font-size:12px;border-bottom:1px solid #f1f5f9;}
 .rp-stats-val{font-weight:700;color:var(--g700);}
 
@@ -544,24 +551,58 @@ select.field-input{cursor:pointer;}
   <!-- RIGHT PANEL: Project info, news, social, ads -->
   <aside class="right-panel">
 
-    <!-- About -->
+    <!-- Mini Games: play while your analysis runs -->
     <div class="rp-section">
-      <h3>🧬 About Bioinfor-Claw</h3>
-      <p>An AI-powered bioinformatics copilot with 50+ expert analysis skills. Built on the <strong>SKILL.md</strong> agent architecture — just describe what you need in plain English.</p>
-      <div style="margin-top:8px;">
-        <span class="rp-tag" style="background:#ecfdf5;color:#059669;">Open Source</span>
-        <span class="rp-tag" style="background:#eff6ff;color:#2563eb;">Agent System</span>
-        <span class="rp-tag" style="background:#fef3c7;color:#d97706;">Bioinformatics</span>
+      <h3>🎮 Play While You Wait</h3>
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">
+        <button onclick="startGame('dna')" class="game-tab active" id="gt-dna">🧬 DNA Match</button>
+        <button onclick="startGame('snake')" class="game-tab" id="gt-snake">🐍 Snake</button>
+        <button onclick="startGame('scramble')" class="game-tab" id="gt-scramble">🔤 Gene Scramble</button>
       </div>
-    </div>
 
-    <!-- Live Stats -->
-    <div class="rp-section" id="rpStats">
-      <h3>📊 Live Statistics</h3>
-      <div class="rp-stats-row"><span>Total Analyses</span><span class="rp-stats-val" id="rpStatAnalyses">-</span></div>
-      <div class="rp-stats-row"><span>Total Visitors</span><span class="rp-stats-val" id="rpStatVisits">-</span></div>
-      <div class="rp-stats-row"><span>Active Today</span><span class="rp-stats-val" id="rpStatToday">-</span></div>
-      <div class="rp-stats-row" style="border:none"><span>Top Gene</span><span class="rp-stats-val" id="rpStatGene">-</span></div>
+      <!-- DNA Memory Match -->
+      <div id="game-dna">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Match the nucleotide base pairs! Flip two cards to find A-T and G-C pairs.</div>
+        <div id="dnaBoard" style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+          <span style="font-size:12px;color:#475569;">Moves: <strong id="dnaMoves">0</strong> | Pairs: <strong id="dnaPairs">0</strong>/8</span>
+          <button onclick="initDnaGame()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">New Game</button>
+        </div>
+      </div>
+
+      <!-- Snake Game -->
+      <div id="game-snake" style="display:none;">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Guide the DNA strand! Eat nucleotides to grow. Arrow keys or swipe to move.</div>
+        <canvas id="snakeCanvas" width="264" height="200" style="border:1px solid var(--border);border-radius:6px;background:#f0fdf4;width:100%;"></canvas>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+          <span style="font-size:12px;color:#475569;">Score: <strong id="snakeScore">0</strong> | Best: <strong id="snakeBest">0</strong></span>
+          <button onclick="initSnakeGame()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Restart</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;margin-top:6px;">
+          <button onclick="snakeDir(0,-1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↑</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;">
+          <button onclick="snakeDir(-1,0)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">←</button>
+          <button onclick="snakeDir(0,1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↓</button>
+          <button onclick="snakeDir(1,0)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">→</button>
+        </div>
+      </div>
+
+      <!-- Gene Scramble -->
+      <div id="game-scramble" style="display:none;">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Unscramble the gene name! These are real human genes.</div>
+        <div id="scrambleWord" style="font-size:28px;font-weight:800;text-align:center;letter-spacing:6px;color:var(--g700);padding:16px 0;font-family:monospace;"></div>
+        <div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:8px;" id="scrambleHint"></div>
+        <div style="display:flex;gap:6px;">
+          <input id="scrambleInput" placeholder="Type your guess…" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter')checkScramble()">
+          <button onclick="checkScramble()" style="padding:8px 14px;background:var(--g700);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Check</button>
+        </div>
+        <div id="scrambleResult" style="text-align:center;margin-top:8px;font-size:12px;min-height:20px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+          <span style="font-size:12px;color:#475569;">Streak: <strong id="scrambleStreak">0</strong></span>
+          <button onclick="newScramble()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Skip →</button>
+        </div>
+      </div>
     </div>
 
     <!-- News / Updates -->
@@ -1274,6 +1315,180 @@ async function refreshLiveStats(){
     if(rpg) rpg.textContent=(d.top_genes&&d.top_genes.length)?d.top_genes[0][0]:'-';
   }catch(e){console.log('[liveStats]',e);}
 }
+
+/* ── Mini-Games ── */
+let _dnaCards=[], _dnaFlipped=[], _dnaMoves=0, _dnaPairs=0, _dnaLocked=false;
+let _snake, _snakeFood, _snakeDir, _snakeScore=0, _snakeBest=0, _snakeTimer=null;
+let _scrambleAnswer='', _scrambleStreak=0;
+
+function startGame(id){
+  ['dna','snake','scramble'].forEach(g=>{
+    document.getElementById('game-'+g).style.display=(g===id)?'':'none';
+    const t=document.getElementById('gt-'+g);
+    if(t) t.classList.toggle('active',g===id);
+  });
+  if(id==='snake') initSnakeGame();
+}
+
+// ─── DNA Memory Match ───
+function initDnaGame(){
+  const bases=['A','T','G','C','A','T','G','C','A','T','G','C','A','T','G','C'];
+  // shuffle
+  for(let i=bases.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[bases[i],bases[j]]=[bases[j],bases[i]];}
+  _dnaCards=bases.map((b,i)=>({base:b,id:i,flipped:false,matched:false}));
+  _dnaFlipped=[];_dnaMoves=0;_dnaPairs=0;_dnaLocked=false;
+  document.getElementById('dnaMoves').textContent='0';
+  document.getElementById('dnaPairs').textContent='0';
+  renderDnaBoard();
+}
+function renderDnaBoard(){
+  const board=document.getElementById('dnaBoard');
+  board.innerHTML=_dnaCards.map((c,i)=>{
+    const cls='dna-card'+(c.flipped?' flipped':'')+(c.matched?' matched':'');
+    const color={'A':'#ef4444','T':'#3b82f6','G':'#22c55e','C':'#f59e0b'}[c.base]||'#333';
+    const txt=(c.flipped||c.matched)?`<span style="color:${color}">${c.base}</span>`:'?';
+    return `<div class="${cls}" onclick="flipDna(${i})">${txt}</div>`;
+  }).join('');
+}
+function flipDna(i){
+  if(_dnaLocked||_dnaCards[i].flipped||_dnaCards[i].matched) return;
+  _dnaCards[i].flipped=true;_dnaFlipped.push(i);
+  renderDnaBoard();
+  if(_dnaFlipped.length===2){
+    _dnaLocked=true;_dnaMoves++;
+    document.getElementById('dnaMoves').textContent=_dnaMoves;
+    const [a,b]=_dnaFlipped;
+    const pair=_dnaCards[a].base+_dnaCards[b].base;
+    const valid=['AT','TA','GC','CG'];
+    if(valid.includes(pair)){
+      _dnaCards[a].matched=_dnaCards[b].matched=true;
+      _dnaPairs++;document.getElementById('dnaPairs').textContent=_dnaPairs;
+      _dnaFlipped=[];_dnaLocked=false;
+      renderDnaBoard();
+      if(_dnaPairs===8) setTimeout(()=>alert('🧬 Perfect! Solved in '+_dnaMoves+' moves!'),300);
+    } else {
+      setTimeout(()=>{_dnaCards[a].flipped=_dnaCards[b].flipped=false;_dnaFlipped=[];_dnaLocked=false;renderDnaBoard();},800);
+    }
+  }
+}
+initDnaGame();
+
+// ─── Snake Game ───
+const SNK_W=22,SNK_H=17,SNK_SZ=12;
+const NUCLEOTIDES=['A','T','G','C'];
+function initSnakeGame(){
+  if(_snakeTimer) clearInterval(_snakeTimer);
+  _snake=[{x:11,y:8},{x:10,y:8},{x:9,y:8}];
+  _snakeDir={x:1,y:0};_snakeScore=0;
+  document.getElementById('snakeScore').textContent='0';
+  placeFood();
+  _snakeTimer=setInterval(snakeTick,120);
+  drawSnake();
+}
+function placeFood(){
+  do{_snakeFood={x:Math.floor(Math.random()*SNK_W),y:Math.floor(Math.random()*SNK_H),n:NUCLEOTIDES[Math.floor(Math.random()*4)]};}
+  while(_snake.some(s=>s.x===_snakeFood.x&&s.y===_snakeFood.y));
+}
+function snakeDir(dx,dy){
+  if(_snakeDir.x===-dx&&_snakeDir.y===-dy) return;
+  _snakeDir={x:dx,y:dy};
+}
+function snakeTick(){
+  const head={x:_snake[0].x+_snakeDir.x,y:_snake[0].y+_snakeDir.y};
+  if(head.x<0||head.x>=SNK_W||head.y<0||head.y>=SNK_H||_snake.some(s=>s.x===head.x&&s.y===head.y)){
+    clearInterval(_snakeTimer);_snakeTimer=null;
+    if(_snakeScore>_snakeBest){_snakeBest=_snakeScore;document.getElementById('snakeBest').textContent=_snakeBest;}
+    drawSnake(true);return;
+  }
+  _snake.unshift(head);
+  if(head.x===_snakeFood.x&&head.y===_snakeFood.y){_snakeScore++;document.getElementById('snakeScore').textContent=_snakeScore;placeFood();}
+  else _snake.pop();
+  drawSnake();
+}
+function drawSnake(dead){
+  const cv=document.getElementById('snakeCanvas'),ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.fillStyle=dead?'#fef2f2':'#f0fdf4';ctx.fillRect(0,0,cv.width,cv.height);
+  // grid
+  ctx.strokeStyle='#e2e8f0';ctx.lineWidth=0.5;
+  for(let x=0;x<=SNK_W;x++){ctx.beginPath();ctx.moveTo(x*SNK_SZ,0);ctx.lineTo(x*SNK_SZ,SNK_H*SNK_SZ);ctx.stroke();}
+  for(let y=0;y<=SNK_H;y++){ctx.beginPath();ctx.moveTo(0,y*SNK_SZ);ctx.lineTo(SNK_W*SNK_SZ,y*SNK_SZ);ctx.stroke();}
+  // food
+  const fc={'A':'#ef4444','T':'#3b82f6','G':'#22c55e','C':'#f59e0b'}[_snakeFood.n];
+  ctx.fillStyle=fc;ctx.beginPath();ctx.arc(_snakeFood.x*SNK_SZ+SNK_SZ/2,_snakeFood.y*SNK_SZ+SNK_SZ/2,SNK_SZ/2-1,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 8px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(_snakeFood.n,_snakeFood.x*SNK_SZ+SNK_SZ/2,_snakeFood.y*SNK_SZ+SNK_SZ/2);
+  // snake
+  _snake.forEach((s,i)=>{
+    ctx.fillStyle=i===0?(dead?'#dc2626':'#166534'):'#22c55e';
+    ctx.fillRect(s.x*SNK_SZ+1,s.y*SNK_SZ+1,SNK_SZ-2,SNK_SZ-2);
+    if(i===0){ctx.fillStyle='#fff';ctx.font='bold 7px sans-serif';ctx.fillText('🧬',s.x*SNK_SZ+SNK_SZ/2,s.y*SNK_SZ+SNK_SZ/2);}
+  });
+  if(dead){ctx.fillStyle='rgba(0,0,0,.5)';ctx.font='bold 16px sans-serif';ctx.fillText('Game Over!',cv.width/2,cv.height/2-8);
+    ctx.font='12px sans-serif';ctx.fillText('Score: '+_snakeScore,cv.width/2,cv.height/2+10);}
+}
+document.addEventListener('keydown',e=>{
+  if(!_snakeTimer) return;
+  const map={'ArrowUp':[0,-1],'ArrowDown':[0,1],'ArrowLeft':[-1,0],'ArrowRight':[1,0],'w':[0,-1],'s':[0,1],'a':[-1,0],'d':[1,0]};
+  if(map[e.key]){e.preventDefault();snakeDir(...map[e.key]);}
+});
+
+// ─── Gene Scramble ───
+const GENE_LIST=[
+  {name:'TP53',hint:'Guardian of the genome — tumor suppressor'},
+  {name:'BRCA1',hint:'Breast cancer susceptibility gene'},
+  {name:'EGFR',hint:'Epidermal growth factor receptor'},
+  {name:'KRAS',hint:'Kirsten rat sarcoma viral oncogene'},
+  {name:'BRAF',hint:'Rapidly accelerated fibrosarcoma'},
+  {name:'MYC',hint:'Master regulator transcription factor'},
+  {name:'PTEN',hint:'Phosphatase and tensin homolog'},
+  {name:'APC',hint:'Adenomatous polyposis coli'},
+  {name:'RB1',hint:'Retinoblastoma protein'},
+  {name:'VEGFA',hint:'Vascular endothelial growth factor A'},
+  {name:'CDH1',hint:'E-cadherin cell adhesion'},
+  {name:'PIK3CA',hint:'PI3-kinase catalytic subunit alpha'},
+  {name:'ALK',hint:'Anaplastic lymphoma kinase'},
+  {name:'IDH1',hint:'Isocitrate dehydrogenase 1'},
+  {name:'NRAS',hint:'Neuroblastoma RAS'},
+  {name:'HER2',hint:'Human epidermal growth factor receptor 2'},
+  {name:'JAK2',hint:'Janus kinase 2 — myeloproliferative'},
+  {name:'FLT3',hint:'Fms-like tyrosine kinase 3'},
+  {name:'NPM1',hint:'Nucleophosmin — AML marker'},
+  {name:'ERBB2',hint:'Receptor tyrosine-protein kinase'},
+  {name:'CDK4',hint:'Cyclin-dependent kinase 4'},
+  {name:'MDM2',hint:'Mouse double minute 2 — p53 regulator'},
+  {name:'SMAD4',hint:'Mothers against decapentaplegic homolog'},
+  {name:'VHL',hint:'Von Hippel-Lindau — renal cell carcinoma'},
+  {name:'KIT',hint:'Stem cell factor receptor'},
+];
+function scrambleStr(s){
+  const a=s.split('');
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a.join('')===s?scrambleStr(s):a.join('');
+}
+function newScramble(){
+  const g=GENE_LIST[Math.floor(Math.random()*GENE_LIST.length)];
+  _scrambleAnswer=g.name;
+  document.getElementById('scrambleWord').textContent=scrambleStr(g.name);
+  document.getElementById('scrambleHint').textContent='Hint: '+g.hint;
+  document.getElementById('scrambleInput').value='';
+  document.getElementById('scrambleResult').textContent='';
+  document.getElementById('scrambleInput').focus();
+}
+function checkScramble(){
+  const guess=document.getElementById('scrambleInput').value.trim().toUpperCase();
+  if(guess===_scrambleAnswer.toUpperCase()){
+    _scrambleStreak++;
+    document.getElementById('scrambleStreak').textContent=_scrambleStreak;
+    document.getElementById('scrambleResult').innerHTML='<span style="color:#22c55e;font-weight:700;">✅ Correct! It\'s '+_scrambleAnswer+'!</span>';
+    setTimeout(newScramble,1200);
+  } else {
+    _scrambleStreak=0;
+    document.getElementById('scrambleStreak').textContent='0';
+    document.getElementById('scrambleResult').innerHTML='<span style="color:#ef4444;">❌ Try again!</span>';
+  }
+}
+newScramble();
 
 function loadSaved() {
   try {
