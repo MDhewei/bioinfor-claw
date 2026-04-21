@@ -9,3 +9,4 @@ gseapy>=1.0
 gprofiler-official>=1.0
 openpyxl>=3.0
 biopython>=1.80
+adjustText>=0.8

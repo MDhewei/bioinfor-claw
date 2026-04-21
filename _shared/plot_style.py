@@ -20,8 +20,10 @@ If the script exposes --font-family / --font-size as CLI flags:
         font_size=getattr(args, 'font_size', None),
     )
 
-The module also provides `PALETTE` — a colorblind-safe qualitative palette,
-and `save_fig()` — a wrapper around savefig with consistent defaults.
+The module also provides:
+  - `PALETTE` — a colorblind-safe qualitative palette
+  - `save_fig()` — a wrapper around savefig with consistent defaults
+  - `smart_labels()` — automatic repositioning of overlapping text labels
 """
 
 from __future__ import annotations
@@ -159,6 +161,60 @@ def init_style(
     })
 
     return family
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Text adjustment — prevent overlapping labels
+# ──────────────────────────────────────────────────────────────────────────────
+_HAS_ADJUST_TEXT = False
+try:
+    from adjustText import adjust_text as _adjust_text
+    _HAS_ADJUST_TEXT = True
+except ImportError:
+    pass
+
+
+def smart_labels(
+    texts: list,
+    ax=None,
+    arrowprops: Optional[dict] = None,
+    **kwargs,
+):
+    """Reposition overlapping text labels using adjustText (if available).
+
+    Parameters
+    ----------
+    texts : list of matplotlib.text.Text
+        The text objects to adjust (returned by ax.text() calls).
+    ax : matplotlib Axes or None
+        The axes to adjust on.  None → current axes.
+    arrowprops : dict or None
+        Arrow style connecting labels to their original positions.
+        None → thin grey arrow.
+    **kwargs
+        Extra keyword arguments passed to adjust_text().
+
+    Returns
+    -------
+    bool — True if adjustment was applied, False if adjustText not available.
+
+    Usage
+    -----
+        from plot_style import init_style, smart_labels
+
+        init_style()
+        fig, ax = plt.subplots()
+        texts = [ax.text(x, y, label) for x, y, label in my_data]
+        smart_labels(texts, ax=ax)
+    """
+    if not _HAS_ADJUST_TEXT or not texts:
+        return False
+    if ax is None:
+        ax = plt.gca()
+    if arrowprops is None:
+        arrowprops = dict(arrowstyle='->', color='#999999', alpha=0.4, lw=0.6)
+    _adjust_text(texts, ax=ax, arrowprops=arrowprops, **kwargs)
+    return True
 
 
 def save_fig(
