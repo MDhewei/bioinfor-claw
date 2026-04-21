@@ -487,6 +487,12 @@ select.field-input{cursor:pointer;}
         </div>
 
         <div class="welcome-note"><span>🎫</span><span><strong>Free trial active</strong> — 50 queries/day, no API key needed. For unlimited use, click <strong>⚙ Settings</strong> to add your own key.</span></div>
+        <div id="liveStats" style="display:none;margin:10px 0;padding:10px 16px;background:linear-gradient(135deg,#ecfdf5,#f0fdf4);border:1px solid #bbf7d0;border-radius:10px;font-size:12px;color:#166534;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+          <span style="font-weight:600">📊 Live</span>
+          <span>🧬 <strong id="statAnalyses">0</strong> analyses run</span>
+          <span>👥 <strong id="statVisitors">0</strong> visitors today</span>
+          <span id="statTopGene" style="display:none">🔥 Top gene: <strong id="statTopGeneName">-</strong></span>
+        </div>
         <!-- skill loader UI kept in DOM (hidden) so loader JS keeps working -->
         <div class="load-bar" style="display:none"><div class="load-fill" id="loadFill"></div></div>
         <div class="load-txt" id="loadTxt" style="display:none">Initialising…</div>
@@ -1146,7 +1152,26 @@ window.onload = async () => {
   }
   if(window._bundleReady) await window._bundleReady;
   await loadAllSkills();
+  // Fetch live stats for the banner
+  refreshLiveStats();
+  setInterval(refreshLiveStats, 60000); // update every minute
 };
+
+async function refreshLiveStats(){
+  try{
+    const url=(state.serverUrl===location.origin)?'/api/stats':state.serverUrl+'/api/stats';
+    const r=await fetch(url,{signal:AbortSignal.timeout(3000)});
+    const d=await r.json();
+    const el=document.getElementById('liveStats');
+    if(el) el.style.display='flex';
+    const a=document.getElementById('statAnalyses');if(a) a.textContent=d.total_analyses||0;
+    const v=document.getElementById('statVisitors');if(v) v.textContent=d.visitors_today||0;
+    if(d.top_genes && d.top_genes.length){
+      const tg=document.getElementById('statTopGene');if(tg) tg.style.display='';
+      const tgn=document.getElementById('statTopGeneName');if(tgn) tgn.textContent=d.top_genes[0][0];
+    }
+  }catch(e){console.log('[liveStats]',e);}
+}
 
 function loadSaved() {
   try {

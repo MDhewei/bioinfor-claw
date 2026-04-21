@@ -1121,6 +1121,7 @@ from urllib.parse import urlparse, parse_qs
 
 import requests as _requests
 from collections import defaultdict as _defaultdict
+import threading as _threading
 
 # ── Rate limiter for free-trial proxy ──────────────────────────────────────
 _DAILY_LIMIT = 50
@@ -1138,6 +1139,89 @@ def _check_rate_limit(ip):
     rec['count'] += 1
     return True, _DAILY_LIMIT - rec['count']
 
+# ── Analytics tracker ──────────────────────────────────────────────────────
+_analytics_lock = _threading.Lock()
+_analytics = {
+    'total_analyses': 0,
+    'total_visits': 0,
+    'visitors_today': {},       # ip -> timestamp
+    'analyses_today': {},       # ip -> count
+    'genes_searched': {},       # gene -> count (all time)
+    'skills_used': {},          # skill_key -> count (all time)
+    'recent_analyses': [],      # last 50: {time, skill, gene, ip_hash}
+    'daily_history': {},        # date -> {visits, analyses}
+    'start_time': datetime.now().isoformat(),
+}
+_ANALYTICS_FILE = None  # set in main()
+
+def _save_analytics():
+    """Persist analytics to disk (non-blocking)."""
+    if not _ANALYTICS_FILE:
+        return
+    try:
+        with _analytics_lock:
+            data = {k: v for k, v in _analytics.items()
+                    if k not in ('visitors_today', 'analyses_today')}
+            # Convert daily counts before saving
+            data['_saved'] = datetime.now().isoformat()
+        _ANALYTICS_FILE.write_text(_json.dumps(data, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f"  [analytics] save error: {e}")
+
+def _load_analytics():
+    """Load persisted analytics on startup."""
+    if _ANALYTICS_FILE and _ANALYTICS_FILE.exists():
+        try:
+            data = _json.loads(_ANALYTICS_FILE.read_text(encoding='utf-8'))
+            for k in ('total_analyses', 'total_visits', 'genes_searched',
+                      'skills_used', 'recent_analyses', 'daily_history', 'start_time'):
+                if k in data:
+                    _analytics[k] = data[k]
+            print(f"  📊  Loaded analytics: {_analytics['total_analyses']} analyses, {_analytics['total_visits']} visits")
+        except Exception as e:
+            print(f"  [analytics] load error: {e}")
+
+def _track_visit(ip):
+    """Track a page visit."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    with _analytics_lock:
+        _analytics['total_visits'] += 1
+        _analytics['visitors_today'][ip] = datetime.now().isoformat()
+        # Daily history
+        if today not in _analytics['daily_history']:
+            _analytics['daily_history'][today] = {'visits': 0, 'analyses': 0}
+        _analytics['daily_history'][today]['visits'] += 1
+
+def _track_analysis(ip, skill_key='', gene=''):
+    """Track an analysis run."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    ip_hash = str(hash(ip))[-6:]  # privacy: only store hash suffix
+    with _analytics_lock:
+        _analytics['total_analyses'] += 1
+        _analytics['analyses_today'][ip] = _analytics['analyses_today'].get(ip, 0) + 1
+        # Skill popularity
+        if skill_key:
+            _analytics['skills_used'][skill_key] = _analytics['skills_used'].get(skill_key, 0) + 1
+        # Gene popularity
+        if gene:
+            g = gene.upper().strip()
+            _analytics['genes_searched'][g] = _analytics['genes_searched'].get(g, 0) + 1
+        # Recent analyses log
+        _analytics['recent_analyses'].append({
+            'time': datetime.now().isoformat(),
+            'skill': skill_key,
+            'gene': gene,
+            'ip_hash': ip_hash,
+        })
+        _analytics['recent_analyses'] = _analytics['recent_analyses'][-100:]
+        # Daily history
+        if today not in _analytics['daily_history']:
+            _analytics['daily_history'][today] = {'visits': 0, 'analyses': 0}
+        _analytics['daily_history'][today]['analyses'] += 1
+    # Save periodically (every 5 analyses)
+    if _analytics['total_analyses'] % 5 == 0:
+        _threading.Thread(target=_save_analytics, daemon=True).start()
+
 class Handler(BaseHTTPRequestHandler):
     html_content = None
     repo_root    = None
@@ -1148,6 +1232,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
 
         if path in ('/', '/index.html'):
+            _track_visit(self.client_address[0])
             self._send_html(self.html_content)
 
         elif path in ('/api/health', '/api/health/'):
@@ -1197,6 +1282,55 @@ class Handler(BaseHTTPRequestHandler):
                 'remaining': max(0, _DAILY_LIMIT - used)
             })
 
+        elif path == '/api/stats':
+            # Public stats for the live banner (no sensitive data)
+            today = datetime.now().strftime('%Y-%m-%d')
+            with _analytics_lock:
+                top_genes = sorted(_analytics['genes_searched'].items(),
+                                   key=lambda x: -x[1])[:10]
+                top_skills = sorted(_analytics['skills_used'].items(),
+                                    key=lambda x: -x[1])[:10]
+                visitors_today = len(_analytics['visitors_today'])
+                analyses_today = sum(_analytics['analyses_today'].values())
+            self._send_json({
+                'total_analyses': _analytics['total_analyses'],
+                'total_visits': _analytics['total_visits'],
+                'visitors_today': visitors_today,
+                'analyses_today': analyses_today,
+                'top_genes': top_genes,
+                'top_skills': top_skills,
+                'uptime_since': _analytics['start_time'],
+            })
+
+        elif path == '/admin':
+            # Serve admin dashboard HTML
+            self._send_html(self._build_admin_html())
+
+        elif path == '/api/admin/stats':
+            # Detailed stats for admin dashboard
+            today = datetime.now().strftime('%Y-%m-%d')
+            with _analytics_lock:
+                top_genes = sorted(_analytics['genes_searched'].items(),
+                                   key=lambda x: -x[1])[:30]
+                top_skills = sorted(_analytics['skills_used'].items(),
+                                    key=lambda x: -x[1])[:20]
+                visitors_today = len(_analytics['visitors_today'])
+                analyses_today = sum(_analytics['analyses_today'].values())
+                # Last 14 days history
+                days = sorted(_analytics['daily_history'].items())[-14:]
+            self._send_json({
+                'total_analyses': _analytics['total_analyses'],
+                'total_visits': _analytics['total_visits'],
+                'visitors_today': visitors_today,
+                'analyses_today': analyses_today,
+                'top_genes': top_genes,
+                'top_skills': top_skills,
+                'daily_history': days,
+                'recent_analyses': _analytics['recent_analyses'][-20:],
+                'uptime_since': _analytics['start_time'],
+                'active_ips_today': visitors_today,
+            })
+
         elif path.startswith('/api/results/'):
             parts = path.split('/')
             if len(parts) >= 5:
@@ -1220,6 +1354,18 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 req = _json.loads(body)
                 result = self._run_skill(req)
+                # Track this analysis
+                skill_key = req.get('skill', req.get('skill_id', ''))
+                gene = ''
+                for arg in (req.get('args') or []):
+                    if isinstance(arg, str) and arg.startswith('--gene'):
+                        continue
+                    if isinstance(arg, str) and not arg.startswith('-'):
+                        g = arg.upper().strip()
+                        if 1 < len(g) < 20 and g.isalpha():
+                            gene = g
+                            break
+                _track_analysis(self.client_address[0], skill_key, gene)
                 self._send_json(result)
             except Exception as e:
                 self._send_json({'error': str(e), 'success': False}, 500)
@@ -1232,6 +1378,16 @@ class Handler(BaseHTTPRequestHandler):
                 req = _json.loads(body) if body else {}
                 tool_name = path[len('/api/tools/'):].rstrip('/')
                 result = self._dispatch_tool(tool_name, req)
+                # Track run_script tool calls as analyses
+                if tool_name == 'run_script':
+                    skill_id = req.get('skill_id', '')
+                    gene = ''
+                    for a in (req.get('args') or []):
+                        if isinstance(a, str) and not a.startswith('-'):
+                            g = a.upper().strip()
+                            if 1 < len(g) < 20 and g.isalpha():
+                                gene = g; break
+                    _track_analysis(self.client_address[0], skill_id, gene)
                 self._send_json(result)
             except Exception as e:
                 import traceback
@@ -3707,6 +3863,102 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _build_admin_html(self):
+        return """<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bioinfor-Claw Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#1e293b;padding:24px;max-width:1200px;margin:0 auto}
+h1{font-size:24px;font-weight:700;margin-bottom:20px;display:flex;align-items:center;gap:10px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #e2e8f0}
+.card-val{font-size:32px;font-weight:700;color:#059669}
+.card-label{font-size:13px;color:#64748b;margin-top:4px}
+.section{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #e2e8f0;margin-bottom:20px}
+.section h2{font-size:16px;font-weight:600;margin-bottom:12px;color:#334155}
+.bar-chart{display:flex;flex-direction:column;gap:6px}
+.bar-row{display:flex;align-items:center;gap:10px;font-size:13px}
+.bar-name{width:140px;text-align:right;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-fill{height:22px;background:linear-gradient(90deg,#059669,#10b981);border-radius:4px;min-width:2px;transition:width .5s}
+.bar-count{font-size:12px;color:#64748b;width:40px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600}
+td{padding:8px;border-bottom:1px solid #f1f5f9}
+.chart-container{height:200px;display:flex;align-items:flex-end;gap:4px;padding:10px 0}
+.chart-bar{background:linear-gradient(180deg,#059669,#10b981);border-radius:4px 4px 0 0;min-width:20px;flex:1;position:relative;transition:height .5s}
+.chart-bar:hover{opacity:.8}
+.chart-label{font-size:10px;color:#64748b;text-align:center;margin-top:4px;transform:rotate(-45deg);white-space:nowrap}
+.refresh-btn{background:#059669;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500}
+.refresh-btn:hover{background:#047857}
+.back-link{color:#059669;text-decoration:none;font-size:14px}
+</style>
+</head><body>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+  <a href="/" class="back-link">← Back to Bioinfor-Claw</a>
+  <button class="refresh-btn" onclick="loadStats()">↻ Refresh</button>
+</div>
+<h1>🧬 Bioinfor-Claw Admin Dashboard</h1>
+<div class="cards" id="cards"></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+  <div class="section"><h2>📈 Daily Activity (last 14 days)</h2><div id="dailyChart" class="chart-container"></div><div id="dailyLabels" style="display:flex;gap:4px;padding-left:0"></div></div>
+  <div class="section"><h2>🧬 Top Genes Searched</h2><div id="topGenes" class="bar-chart"></div></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px">
+  <div class="section"><h2>🔬 Top Skills Used</h2><div id="topSkills" class="bar-chart"></div></div>
+  <div class="section"><h2>🕐 Recent Analyses</h2><table><thead><tr><th>Time</th><th>Skill</th><th>Gene</th></tr></thead><tbody id="recentTable"></tbody></table></div>
+</div>
+<script>
+async function loadStats(){
+  const r=await fetch('/api/admin/stats');
+  const d=await r.json();
+  // Cards
+  document.getElementById('cards').innerHTML=`
+    <div class="card"><div class="card-val">${d.total_analyses}</div><div class="card-label">Total Analyses</div></div>
+    <div class="card"><div class="card-val">${d.total_visits}</div><div class="card-label">Total Visits</div></div>
+    <div class="card"><div class="card-val">${d.visitors_today}</div><div class="card-label">Visitors Today</div></div>
+    <div class="card"><div class="card-val">${d.analyses_today}</div><div class="card-label">Analyses Today</div></div>
+  `;
+  // Daily chart
+  const days=d.daily_history||[];
+  const maxV=Math.max(...days.map(([_,v])=>Math.max(v.visits||0,v.analyses||0)),1);
+  let ch='',lb='';
+  days.forEach(([date,v])=>{
+    const h1=Math.max(2,((v.visits||0)/maxV)*180);
+    const h2=Math.max(2,((v.analyses||0)/maxV)*180);
+    ch+=`<div style="flex:1;display:flex;gap:2px;align-items:flex-end">
+      <div class="chart-bar" style="height:${h1}px;background:linear-gradient(180deg,#3b82f6,#60a5fa)" title="${date}: ${v.visits} visits"></div>
+      <div class="chart-bar" style="height:${h2}px" title="${date}: ${v.analyses} analyses"></div>
+    </div>`;
+    lb+=`<div style="flex:1;font-size:9px;color:#94a3b8;text-align:center">${date.slice(5)}</div>`;
+  });
+  document.getElementById('dailyChart').innerHTML=ch||'<div style="color:#94a3b8;padding:40px">No data yet</div>';
+  document.getElementById('dailyLabels').innerHTML=lb;
+  // Top genes
+  const gMax=d.top_genes.length?d.top_genes[0][1]:1;
+  document.getElementById('topGenes').innerHTML=d.top_genes.map(([g,c])=>
+    `<div class="bar-row"><span class="bar-name">${g}</span><div class="bar-fill" style="width:${Math.max(5,(c/gMax)*100)}%"></div><span class="bar-count">${c}</span></div>`
+  ).join('')||'<div style="color:#94a3b8;padding:20px">No data yet</div>';
+  // Top skills
+  const sMax=d.top_skills.length?d.top_skills[0][1]:1;
+  document.getElementById('topSkills').innerHTML=d.top_skills.map(([s,c])=>{
+    const name=s.split('/').pop()||s;
+    return `<div class="bar-row"><span class="bar-name" title="${s}">${name}</span><div class="bar-fill" style="width:${Math.max(5,(c/sMax)*100)}%"></div><span class="bar-count">${c}</span></div>`;
+  }).join('')||'<div style="color:#94a3b8;padding:20px">No data yet</div>';
+  // Recent analyses
+  document.getElementById('recentTable').innerHTML=d.recent_analyses.slice().reverse().map(a=>{
+    const t=new Date(a.time);
+    const ts=t.toLocaleTimeString()+' '+t.toLocaleDateString();
+    const skill=(a.skill||'').split('/').pop()||'-';
+    return `<tr><td>${ts}</td><td>${skill}</td><td>${a.gene||'-'}</td></tr>`;
+  }).join('')||'<tr><td colspan="3" style="color:#94a3b8;text-align:center;padding:20px">No analyses yet</td></tr>';
+}
+loadStats();
+setInterval(loadStats,30000);
+</script>
+</body></html>"""
+
     def _send_file(self, path):
         import mimetypes
         mime, _ = mimetypes.guess_type(str(path))
@@ -3817,6 +4069,10 @@ def main():
     port = args.port
     results_dir = repo / "web_results"
     results_dir.mkdir(exist_ok=True)
+    # Initialize analytics persistence
+    global _ANALYTICS_FILE
+    _ANALYTICS_FILE = results_dir / '_analytics.json'
+    _load_analytics()
     Handler.repo_root   = repo
     Handler.results_dir = results_dir
     # Allow quick restart without "Address already in use" errors
@@ -3850,7 +4106,8 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n\n  👋  Server stopped. Goodbye!\n")
+        _save_analytics()
+        print("\n\n  👋  Server stopped. Analytics saved. Goodbye!\n")
 
 if __name__ == '__main__':
     main()
