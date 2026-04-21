@@ -531,7 +531,7 @@ let state = {{
   mode:'auto', selectedSkillKey:null,
   conversation:[], loadedSkills:{{}}, systemPrompt:'',
   skillsReady:false, msgCount:0, scriptCount:0,
-  attachedFiles:[], serverConnected:false, serverUrl:'http://localhost:8000',
+  attachedFiles:[], serverConnected:false, serverUrl:location.origin,
 }};
 
 // ═══ INIT ════════════════════════════════════════════════════

@@ -811,7 +811,7 @@ let state = {
   selectedSkillKey:null, conversation:[],
   loadedSkills:{}, systemPrompt:'', skillsReady:false,
   msgCount:0, scriptCount:0, attachedFiles:[],
-  serverConnected:false, serverUrl:'http://localhost:8000',
+  serverConnected:false, serverUrl:location.origin,
   // Remember last skill execution for follow-up modifications
   lastExec:null,  // {skillKey, scriptName, uploadedPath, inputFilename, params, llmArgs, command, reply}
   // Agent loop: track last-uploaded files so follow-up turns can reuse them
@@ -1376,7 +1376,7 @@ async function loadAllSkills() {
   }
   // PATH B: local server
   document.getElementById('loadTxt').textContent='Looking for local server…';
-  for(const url of ['http://localhost:7860','http://127.0.0.1:7860','http://localhost:8000','http://127.0.0.1:8000']){
+  for(const url of [location.origin,'http://localhost:7860','http://127.0.0.1:7860','http://localhost:8000','http://127.0.0.1:8000']){
     try{
       const r=await fetch(url+'/api/skills',{signal:AbortSignal.timeout(2000)});
       if(r.ok){
