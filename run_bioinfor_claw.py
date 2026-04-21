@@ -3671,10 +3671,11 @@ def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('--repo', default='.', help='bioinfor-claw folder (default: current dir)')
-    ap.add_argument('--port', default=7860, type=int, help='Port to serve on (default: 7860)')
-    ap.add_argument('--host', default='localhost',
-                    help='Bind address. Use 0.0.0.0 to expose on LAN / behind a tunnel. '
-                         'Default "localhost" = local-only.')
+    ap.add_argument('--port', default=int(os.environ.get('PORT', 7860)), type=int,
+                    help='Port to serve on (default: $PORT or 7860)')
+    ap.add_argument('--host', default='0.0.0.0' if os.environ.get('PORT') else 'localhost',
+                    help='Bind address. Auto-detects cloud deployment via $PORT env var. '
+                         'Default "localhost" locally, "0.0.0.0" on cloud.')
     ap.add_argument('--no-browser', action='store_true', help='Do not open browser automatically')
     args = ap.parse_args()
 
@@ -3766,7 +3767,7 @@ def main():
 {'═'*58}
 """)
 
-    if not args.no_browser:
+    if not args.no_browser and not os.environ.get('PORT'):
         threading.Thread(target=open_browser, args=(port,), daemon=True).start()
 
     try:
