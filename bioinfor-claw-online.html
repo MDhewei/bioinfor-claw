@@ -558,6 +558,7 @@ select.field-input{cursor:pointer;}
         <button onclick="startGame('dna')" class="game-tab active" id="gt-dna">🧬 DNA Match</button>
         <button onclick="startGame('snake')" class="game-tab" id="gt-snake">🐍 Snake</button>
         <button onclick="startGame('scramble')" class="game-tab" id="gt-scramble">🔤 Gene Scramble</button>
+        <button onclick="startGame('tetris')" class="game-tab" id="gt-tetris">🧱 Tetris</button>
       </div>
 
       <!-- DNA Memory Match -->
@@ -603,22 +604,26 @@ select.field-input{cursor:pointer;}
           <button onclick="newScramble()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Skip →</button>
         </div>
       </div>
-    </div>
 
-    <!-- News / Updates -->
-    <div class="rp-section">
-      <h3>📰 News & Updates</h3>
-      <div class="rp-news">
-        <div class="rp-news-date">Apr 2026</div>
-        <div class="rp-news-title">🚀 v1.3 — Free trial mode, real cBioPortal co-expression, faster lab search</div>
-      </div>
-      <div class="rp-news">
-        <div class="rp-news-date">Apr 2026</div>
-        <div class="rp-news-title">🌐 Deployed on Render — try it without any setup!</div>
-      </div>
-      <div class="rp-news">
-        <div class="rp-news-date">Mar 2026</div>
-        <div class="rp-news-title">🧪 50+ skills covering TCGA, DepMap, GTEx, CRISPR, enrichment & more</div>
+      <!-- Tetris -->
+      <div id="game-tetris" style="display:none;">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Classic blocks! Arrow keys or buttons to move & rotate. Clear lines to score!</div>
+        <canvas id="tetrisCanvas" width="200" height="400" style="border:1px solid var(--border);border-radius:6px;background:#0f172a;display:block;margin:0 auto;"></canvas>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+          <span style="font-size:12px;color:#475569;">Score: <strong id="tetrisScore">0</strong> | Lines: <strong id="tetrisLines">0</strong></span>
+          <button onclick="initTetris()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Restart</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;margin-top:6px;">
+          <button onclick="tetrisMove('rotate')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↻</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;">
+          <button onclick="tetrisMove('left')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">←</button>
+          <button onclick="tetrisMove('down')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↓</button>
+          <button onclick="tetrisMove('right')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">→</button>
+        </div>
+        <div style="display:flex;justify-content:center;margin-top:4px;">
+          <button onclick="tetrisMove('drop')" style="padding:4px 16px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:11px;">⏬ Drop</button>
+        </div>
       </div>
     </div>
 
@@ -1322,12 +1327,13 @@ let _snake, _snakeFood, _snakeDir, _snakeScore=0, _snakeBest=0, _snakeTimer=null
 let _scrambleAnswer='', _scrambleStreak=0;
 
 function startGame(id){
-  ['dna','snake','scramble'].forEach(g=>{
+  ['dna','snake','scramble','tetris'].forEach(g=>{
     document.getElementById('game-'+g).style.display=(g===id)?'':'none';
     const t=document.getElementById('gt-'+g);
     if(t) t.classList.toggle('active',g===id);
   });
   if(id==='snake') initSnakeGame();
+  if(id==='tetris') initTetris();
 }
 
 // ─── DNA Memory Match ───
@@ -1489,6 +1495,123 @@ function checkScramble(){
   }
 }
 newScramble();
+
+// ─── Tetris ───
+const TET_COLS=10,TET_ROWS=20,TET_SZ=20;
+const TET_SHAPES=[
+  {shape:[[1,1,1,1]],color:'#06b6d4'},           // I - cyan
+  {shape:[[1,1],[1,1]],color:'#eab308'},           // O - yellow
+  {shape:[[0,1,0],[1,1,1]],color:'#a855f7'},       // T - purple
+  {shape:[[1,0,0],[1,1,1]],color:'#3b82f6'},       // J - blue
+  {shape:[[0,0,1],[1,1,1]],color:'#f97316'},       // L - orange
+  {shape:[[0,1,1],[1,1,0]],color:'#22c55e'},       // S - green
+  {shape:[[1,1,0],[0,1,1]],color:'#ef4444'},       // Z - red
+];
+let _tetBoard,_tetPiece,_tetX,_tetY,_tetScore=0,_tetLinesCleared=0,_tetTimer=null,_tetOver=false;
+
+function initTetris(){
+  if(_tetTimer) clearInterval(_tetTimer);
+  _tetBoard=Array.from({length:TET_ROWS},()=>Array(TET_COLS).fill(null));
+  _tetScore=0;_tetLinesCleared=0;_tetOver=false;
+  document.getElementById('tetrisScore').textContent='0';
+  document.getElementById('tetrisLines').textContent='0';
+  spawnTetPiece();
+  _tetTimer=setInterval(tetTick,500);
+  drawTetris();
+}
+function spawnTetPiece(){
+  const t=TET_SHAPES[Math.floor(Math.random()*TET_SHAPES.length)];
+  _tetPiece={shape:t.shape.map(r=>[...r]),color:t.color};
+  _tetX=Math.floor((TET_COLS-_tetPiece.shape[0].length)/2);
+  _tetY=0;
+  if(!tetValid(_tetPiece.shape,_tetX,_tetY)){_tetOver=true;clearInterval(_tetTimer);_tetTimer=null;drawTetris();}
+}
+function tetValid(shape,px,py){
+  for(let r=0;r<shape.length;r++)for(let c=0;c<shape[r].length;c++){
+    if(!shape[r][c]) continue;
+    const nx=px+c,ny=py+r;
+    if(nx<0||nx>=TET_COLS||ny>=TET_ROWS) return false;
+    if(ny>=0&&_tetBoard[ny][nx]) return false;
+  }
+  return true;
+}
+function tetRotate(shape){
+  const rows=shape.length,cols=shape[0].length;
+  const rot=Array.from({length:cols},()=>Array(rows).fill(0));
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++) rot[c][rows-1-r]=shape[r][c];
+  return rot;
+}
+function tetLock(){
+  for(let r=0;r<_tetPiece.shape.length;r++)for(let c=0;c<_tetPiece.shape[r].length;c++){
+    if(!_tetPiece.shape[r][c]) continue;
+    const ny=_tetY+r;if(ny<0) continue;
+    _tetBoard[ny][_tetX+c]=_tetPiece.color;
+  }
+  // clear lines
+  let cleared=0;
+  for(let r=TET_ROWS-1;r>=0;r--){
+    if(_tetBoard[r].every(c=>c)){_tetBoard.splice(r,1);_tetBoard.unshift(Array(TET_COLS).fill(null));cleared++;r++;}
+  }
+  if(cleared){_tetLinesCleared+=cleared;_tetScore+=[0,100,300,500,800][cleared]||800;
+    document.getElementById('tetrisScore').textContent=_tetScore;
+    document.getElementById('tetrisLines').textContent=_tetLinesCleared;}
+  spawnTetPiece();
+}
+function tetTick(){
+  if(_tetOver) return;
+  if(tetValid(_tetPiece.shape,_tetX,_tetY+1)){_tetY++;}
+  else tetLock();
+  drawTetris();
+}
+function tetrisMove(dir){
+  if(_tetOver){if(dir==='rotate'||dir==='down') initTetris();return;}
+  if(dir==='left'&&tetValid(_tetPiece.shape,_tetX-1,_tetY)) _tetX--;
+  if(dir==='right'&&tetValid(_tetPiece.shape,_tetX+1,_tetY)) _tetX++;
+  if(dir==='down'&&tetValid(_tetPiece.shape,_tetX,_tetY+1)) _tetY++;
+  if(dir==='rotate'){const rot=tetRotate(_tetPiece.shape);if(tetValid(rot,_tetX,_tetY)) _tetPiece.shape=rot;}
+  if(dir==='drop'){while(tetValid(_tetPiece.shape,_tetX,_tetY+1))_tetY++;tetLock();}
+  drawTetris();
+}
+function drawTetris(){
+  const cv=document.getElementById('tetrisCanvas'),ctx=cv.getContext('2d');
+  ctx.fillStyle='#0f172a';ctx.fillRect(0,0,cv.width,cv.height);
+  // grid lines
+  ctx.strokeStyle='#1e293b';ctx.lineWidth=0.5;
+  for(let x=0;x<=TET_COLS;x++){ctx.beginPath();ctx.moveTo(x*TET_SZ,0);ctx.lineTo(x*TET_SZ,TET_ROWS*TET_SZ);ctx.stroke();}
+  for(let y=0;y<=TET_ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*TET_SZ);ctx.lineTo(TET_COLS*TET_SZ,y*TET_SZ);ctx.stroke();}
+  // board
+  for(let r=0;r<TET_ROWS;r++)for(let c=0;c<TET_COLS;c++){
+    if(_tetBoard[r][c]){ctx.fillStyle=_tetBoard[r][c];ctx.fillRect(c*TET_SZ+1,r*TET_SZ+1,TET_SZ-2,TET_SZ-2);
+      ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(c*TET_SZ+1,r*TET_SZ+1,TET_SZ-2,3);}
+  }
+  // ghost piece (preview drop position)
+  if(!_tetOver){
+    let gy=_tetY;while(tetValid(_tetPiece.shape,_tetX,gy+1))gy++;
+    if(gy!==_tetY){for(let r=0;r<_tetPiece.shape.length;r++)for(let c=0;c<_tetPiece.shape[r].length;c++){
+      if(!_tetPiece.shape[r][c]) continue;
+      ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect((_tetX+c)*TET_SZ+1,(gy+r)*TET_SZ+1,TET_SZ-2,TET_SZ-2);
+    }}
+  }
+  // current piece
+  if(!_tetOver){for(let r=0;r<_tetPiece.shape.length;r++)for(let c=0;c<_tetPiece.shape[r].length;c++){
+    if(!_tetPiece.shape[r][c]) continue;
+    const px=(_tetX+c)*TET_SZ,py=(_tetY+r)*TET_SZ;
+    ctx.fillStyle=_tetPiece.color;ctx.fillRect(px+1,py+1,TET_SZ-2,TET_SZ-2);
+    ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fillRect(px+1,py+1,TET_SZ-2,3);
+  }}
+  if(_tetOver){ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,cv.height/2-30,cv.width,60);
+    ctx.fillStyle='#fff';ctx.font='bold 18px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('GAME OVER',cv.width/2,cv.height/2-6);
+    ctx.font='13px sans-serif';ctx.fillText('Score: '+_tetScore+' | Lines: '+_tetLinesCleared,cv.width/2,cv.height/2+14);}
+}
+// keyboard for tetris
+document.addEventListener('keydown',e=>{
+  if(!_tetTimer&&!_tetOver) return;
+  const el=document.getElementById('game-tetris');
+  if(!el||el.style.display==='none') return;
+  const map={'ArrowLeft':'left','ArrowRight':'right','ArrowDown':'down','ArrowUp':'rotate',' ':'drop'};
+  if(map[e.key]){e.preventDefault();tetrisMove(map[e.key]);}
+});
 
 function loadSaved() {
   try {
