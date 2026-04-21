@@ -1119,6 +1119,25 @@ function clearSession() {{
 import json as _json, subprocess as _subprocess, shutil as _shutil
 from urllib.parse import urlparse, parse_qs
 
+import requests as _requests
+from collections import defaultdict as _defaultdict
+
+# ── Rate limiter for free-trial proxy ──────────────────────────────────────
+_DAILY_LIMIT = 20
+_rate_counts = _defaultdict(lambda: {'date': '', 'count': 0})
+
+def _check_rate_limit(ip):
+    """Return (allowed: bool, remaining: int) for the given IP today."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    rec = _rate_counts[ip]
+    if rec['date'] != today:
+        rec['date'] = today
+        rec['count'] = 0
+    if rec['count'] >= _DAILY_LIMIT:
+        return False, 0
+    rec['count'] += 1
+    return True, _DAILY_LIMIT - rec['count']
+
 class Handler(BaseHTTPRequestHandler):
     html_content = None
     repo_root    = None
@@ -1164,6 +1183,19 @@ class Handler(BaseHTTPRequestHandler):
                     sub[kd.name] = {'has_skill_md': has_md, 'scripts': scripts}
                 if sub: skills[sd.name] = sub
             self._send_json({'skills': skills})
+
+        elif path == '/api/chat/quota':
+            client_ip = self.client_address[0]
+            today = datetime.now().strftime('%Y-%m-%d')
+            rec = _rate_counts[client_ip]
+            used = rec['count'] if rec['date'] == today else 0
+            has_key = bool(os.environ.get('MINIMAX_API_KEY', ''))
+            self._send_json({
+                'available': has_key,
+                'limit': _DAILY_LIMIT,
+                'used': used,
+                'remaining': max(0, _DAILY_LIMIT - used)
+            })
 
         elif path.startswith('/api/results/'):
             parts = path.split('/')
@@ -1228,6 +1260,41 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 self._send_json({'error': str(e), 'success': False}, 500)
+
+        elif path == '/api/chat':
+            # ── Free-trial LLM proxy → MiniMax ────────────────────────────────
+            minimax_key = os.environ.get('MINIMAX_API_KEY', '')
+            if not minimax_key:
+                self._send_json({'error': 'Free trial not configured on this server'}, 503)
+                return
+            client_ip = self.client_address[0]
+            allowed, remaining = _check_rate_limit(client_ip)
+            if not allowed:
+                self._send_json({
+                    'error': 'Daily free trial limit reached (20/day). Please enter your own API key to continue.',
+                    'quota': {'limit': _DAILY_LIMIT, 'remaining': 0}
+                }, 429)
+                return
+            try:
+                req = _json.loads(body)
+                # Force model to MiniMax-M2.5 regardless of what frontend sends
+                req['model'] = 'MiniMax-M2.5'
+                # Cap tokens
+                req['max_tokens'] = min(req.get('max_tokens', 8192), 8192)
+                # Forward to MiniMax (OpenAI-compatible)
+                r = _requests.post(
+                    'https://api.minimax.io/v1/chat/completions',
+                    headers={'Content-Type': 'application/json',
+                             'Authorization': f'Bearer {minimax_key}'},
+                    json=req,
+                    timeout=120
+                )
+                resp = r.json()
+                # Inject quota info so frontend can display it
+                resp['_quota'] = {'limit': _DAILY_LIMIT, 'remaining': remaining}
+                self._send_json(resp, r.status_code)
+            except Exception as e:
+                self._send_json({'error': f'Proxy error: {e}'}, 502)
 
         else:
             self.send_error(404)
@@ -3700,11 +3767,20 @@ def main():
         print("❌  No SKILL.md files found."); sys.exit(1)
 
     print("🔨  Building app…")
-    # Prefer serving bioinfor-claw.html (has skills pre-embedded + improved UI)
-    static_html = repo / "bioinfor-claw.html"
+    # Choose HTML based on environment: online version (with free trial) on cloud,
+    # local version otherwise.
+    is_cloud = bool(os.environ.get('PORT'))
+    if is_cloud:
+        static_html = repo / "bioinfor-claw-online.html"
+        if not static_html.exists():
+            static_html = repo / "bioinfor-claw.html"
+        label = "online"
+    else:
+        static_html = repo / "bioinfor-claw.html"
+        label = "local"
     if static_html.exists():
         html = static_html.read_text(encoding="utf-8")
-        print(f"  📄  Serving existing bioinfor-claw.html ({len(html)//1024} KB)")
+        print(f"  📄  Serving {static_html.name} ({label}, {len(html)//1024} KB)")
     else:
         html = build_html(tree_ui, flat)
         print(f"  🏗️   Built HTML in memory ({len(html)//1024} KB)")
