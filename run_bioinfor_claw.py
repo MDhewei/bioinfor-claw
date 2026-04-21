@@ -3658,8 +3658,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         # Only log API calls, not page loads
-        if '/api/' in (args[0] if args else ''):
-            print(f"  [{datetime.now().strftime('%H:%M:%S')}] {args[0] if args else ''}")
+        msg = str(args[0]) if args else ''
+        if '/api/' in msg:
+            print(f"  [{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
 def open_browser(port):
     time.sleep(1.0)
