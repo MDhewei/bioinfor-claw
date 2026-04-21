@@ -1123,7 +1123,7 @@ import requests as _requests
 from collections import defaultdict as _defaultdict
 
 # ── Rate limiter for free-trial proxy ──────────────────────────────────────
-_DAILY_LIMIT = 20
+_DAILY_LIMIT = 50
 _rate_counts = _defaultdict(lambda: {'date': '', 'count': 0})
 
 def _check_rate_limit(ip):

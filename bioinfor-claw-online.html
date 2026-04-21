@@ -486,7 +486,7 @@ select.field-input{cursor:pointer;}
           <div class="ep-chip" onclick="document.getElementById('userInput').value='Get expression of TP53 across all TCGA cancer types';document.getElementById('userInput').focus()">Pan-cancer expression</div>
         </div>
 
-        <div class="welcome-note"><span>🎫</span><span><strong>Free trial active</strong> — 20 queries/day, no API key needed. For unlimited use, click <strong>⚙ Settings</strong> to add your own key.</span></div>
+        <div class="welcome-note"><span>🎫</span><span><strong>Free trial active</strong> — 50 queries/day, no API key needed. For unlimited use, click <strong>⚙ Settings</strong> to add your own key.</span></div>
         <!-- skill loader UI kept in DOM (hidden) so loader JS keeps working -->
         <div class="load-bar" style="display:none"><div class="load-fill" id="loadFill"></div></div>
         <div class="load-txt" id="loadTxt" style="display:none">Initialising…</div>
@@ -571,9 +571,9 @@ Object.entries(SKILL_TREE).forEach(([sk,m]) =>
 //  PROVIDERS
 // ═══════════════════════════════════════════════════════════
 const PROVIDERS = {
-  free_trial:{name:'🎫 Free Trial',keyPlaceholder:'',keyHint:'No key needed — 20 free queries/day powered by MiniMax M2.5',
+  free_trial:{name:'🎫 Free Trial',keyPlaceholder:'',keyHint:'No key needed — 50 free queries/day powered by MiniMax M2.5',
     models:['MiniMax-M2.5'],
-    modelLabels:['MiniMax M2.5 (free, 20/day)'],
+    modelLabels:['MiniMax M2.5 (free, 50/day)'],
     noKey:true,
     call:callFreeTrial},
   anthropic:{name:'Anthropic',keyPlaceholder:'sk-ant-…',keyHint:'Get yours at console.anthropic.com',
