@@ -1118,35 +1118,32 @@ window.onload = async () => {
   ta.addEventListener('input', ()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,130)+'px';});
   initDragDrop();
   document.getElementById('settingsModal').addEventListener('click', e=>{if(e.target===e.currentTarget)closeSettings();});
-  detectServer().then(async found=>{
-    if(!found){setTimeout(()=>detectServer(),2000);setTimeout(()=>detectServer(),5000);}
-    console.log('[init] detectServer result:',found,'serverConnected:',state.serverConnected);
-    // Check if free trial is available on this server
-    if(state.provider==='free_trial' && found){
-      try{
-        const qUrl=(state.serverUrl===location.origin)?'/api/chat/quota':state.serverUrl+'/api/chat/quota';
-        const qr=await fetch(qUrl,{signal:AbortSignal.timeout(3000)});
-        const qd=await qr.json();
-        if(!qd.available){
-          // No MINIMAX_API_KEY on server — fall back to anthropic
-          console.log('[init] Free trial not available, switching to anthropic');
-          state.provider='anthropic'; state.model=PROVIDERS['anthropic'].models[0];
-          syncProviderUI(); saveState();
-          // Hide free trial UI elements
-          const ftTab=document.querySelector('[data-p="free_trial"]');
-          if(ftTab) ftTab.style.display='none';
-          const ftCard=document.getElementById('pc-free_trial');
-          if(ftCard) ftCard.style.display='none';
-          // Update welcome note
-          const wn=document.querySelector('.welcome-note');
-          if(wn) wn.innerHTML='<span>\ud83d\udd11</span><span>Click <strong>\u2699 Settings</strong> above to add your API key and start chatting.</span>';
-        } else {
-          const badge=document.getElementById('quotaBadge');
-          if(badge){badge.textContent='\ud83c\udf9f '+qd.remaining+'/'+qd.limit+' free today';badge.style.display='inline-block';}
-        }
-      }catch(e){console.log('[init] quota check failed:',e);}
-    }
-  });
+  // Await server detection before allowing interaction (critical for free trial)
+  const found = await detectServer();
+  if(!found){setTimeout(()=>detectServer(),2000);setTimeout(()=>detectServer(),5000);}
+  console.log('[init] detectServer result:',found,'serverConnected:',state.serverConnected);
+  // Check if free trial is available on this server
+  if(state.provider==='free_trial' && found){
+    try{
+      const qUrl=(state.serverUrl===location.origin)?'/api/chat/quota':state.serverUrl+'/api/chat/quota';
+      const qr=await fetch(qUrl,{signal:AbortSignal.timeout(3000)});
+      const qd=await qr.json();
+      if(!qd.available){
+        console.log('[init] Free trial not available, switching to anthropic');
+        state.provider='anthropic'; state.model=PROVIDERS['anthropic'].models[0];
+        syncProviderUI(); saveState();
+        const ftTab=document.querySelector('[data-p="free_trial"]');
+        if(ftTab) ftTab.style.display='none';
+        const ftCard=document.getElementById('pc-free_trial');
+        if(ftCard) ftCard.style.display='none';
+        const wn=document.querySelector('.welcome-note');
+        if(wn) wn.innerHTML='<span>\ud83d\udd11</span><span>Click <strong>\u2699 Settings</strong> above to add your API key and start chatting.</span>';
+      } else {
+        const badge=document.getElementById('quotaBadge');
+        if(badge){badge.textContent='\ud83c\udf9f '+qd.remaining+'/'+qd.limit+' free today';badge.style.display='inline-block';}
+      }
+    }catch(e){console.log('[init] quota check failed:',e);}
+  }
   if(window._bundleReady) await window._bundleReady;
   await loadAllSkills();
 };
@@ -2022,11 +2019,17 @@ async function callAnthropicStream(sys,msgs,model,onChunk){
 
 // ── Free Trial: proxy through server → MiniMax ──────────────
 async function callFreeTrial(sys,msgs,model){
+  if(!state.serverConnected) await detectServer();
   const url=(state.serverUrl===location.origin)?'/api/chat':state.serverUrl+'/api/chat';
-  const r=await fetch(url,{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'MiniMax-M2.5',messages:[{role:'system',content:sys},...msgs],max_tokens:8192})});
-  const d=await r.json();
+  const payload=JSON.stringify({model:'MiniMax-M2.5',messages:[{role:'system',content:sys},...msgs],max_tokens:8192});
+  let d;
+  for(let attempt=0;attempt<2;attempt++){
+    const r=await fetch(url,{method:'POST',
+      headers:{'Content-Type':'application/json'},body:payload});
+    d=await r.json();
+    if(!d.error) break;
+    if(attempt===0){console.log('[free_trial] retry after error:',d.error);await new Promise(r=>setTimeout(r,1000));}
+  }
   if(d._quota){
     const q=d._quota;
     const badge=document.getElementById('quotaBadge');
@@ -2195,13 +2198,20 @@ async function callLLMWithTools(sys, msgs, tools, signal){
   }
   // Free trial: proxy through server → MiniMax (no key needed)
   if(prov==='free_trial'){
+    if(!state.serverConnected) await detectServer();
     const proxyUrl=(state.serverUrl===location.origin)?'/api/chat':state.serverUrl+'/api/chat';
     const fullMsgs=[{role:'system',content:sys}, ...msgs];
-    const r=await fetch(proxyUrl,{method:'POST',signal,
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'MiniMax-M2.5', messages:fullMsgs,
-        tools, tool_choice:'auto', max_tokens:8192})});
-    const d=await r.json();
+    const payload=JSON.stringify({model:'MiniMax-M2.5', messages:fullMsgs,
+      tools, tool_choice:'auto', max_tokens:8192});
+    // Retry once on transient failure (cold start / race condition)
+    let d;
+    for(let attempt=0; attempt<2; attempt++){
+      const r=await fetch(proxyUrl,{method:'POST',signal,
+        headers:{'Content-Type':'application/json'}, body:payload});
+      d=await r.json();
+      if(!d.error) break;
+      if(attempt===0){console.log('[free_trial] retry after error:',d.error);await new Promise(r=>setTimeout(r,1000));}
+    }
     if(d._quota){
       const badge=document.getElementById('quotaBadge');
       if(badge){badge.textContent='\ud83c\udf9f '+d._quota.remaining+'/'+d._quota.limit+' free today';badge.style.display='inline-block';}
