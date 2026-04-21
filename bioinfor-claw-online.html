@@ -58,7 +58,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 .status-dot{width:8px;height:8px;border-radius:50%;background:var(--g500);box-shadow:0 0 0 2px var(--g300);animation:pulse 2s infinite;}
 
 /* LAYOUT */
-.workspace{flex:1;display:grid;grid-template-columns:320px 1fr;overflow:hidden;}
+.workspace{flex:1;display:grid;grid-template-columns:280px 1fr 300px;overflow:hidden;}
+@media(max-width:1100px){.workspace{grid-template-columns:1fr;}.sidebar,.right-panel{display:none!important;}}
 
 /* SIDEBAR */
 .sidebar{border-right:1px solid var(--border);background:var(--surf);display:flex;flex-direction:column;overflow:hidden;}
@@ -108,6 +109,23 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 .sub-dot.err{background:var(--red);}
 .ex-item{padding:7px 10px;border-left:2px solid var(--border2);font-size:11px;color:var(--text2);cursor:pointer;margin-bottom:5px;transition:all .15s;border-radius:0 5px 5px 0;line-height:1.5;}
 .ex-item:hover{border-left-color:var(--teal);color:var(--teal);background:var(--teal-l);}
+
+/* RIGHT PANEL */
+.right-panel{border-left:1px solid var(--border);background:var(--surf);display:flex;flex-direction:column;overflow-y:auto;padding:16px;gap:16px;font-size:13px;}
+.rp-section{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.rp-section h3{font-size:13px;font-weight:700;color:var(--g700);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.rp-section p{font-size:12px;line-height:1.6;color:#475569;margin-bottom:6px;}
+.rp-tag{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:600;margin:2px;}
+.rp-link{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;text-decoration:none;color:#334155;font-size:12.5px;font-weight:500;transition:background .15s;}
+.rp-link:hover{background:var(--g50,#f0fdf4);}
+.rp-link .rp-icon{font-size:18px;width:28px;text-align:center;}
+.rp-news{padding:8px 0;border-bottom:1px solid #f1f5f9;}
+.rp-news:last-child{border-bottom:none;}
+.rp-news-date{font-size:10px;color:#94a3b8;}
+.rp-news-title{font-size:12px;font-weight:600;color:#334155;margin-top:2px;}
+.rp-ad-slot{background:linear-gradient(135deg,#f8fafc,#f1f5f9);border:1px dashed #cbd5e1;border-radius:10px;padding:20px;text-align:center;color:#94a3b8;font-size:11px;min-height:120px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;}
+.rp-stats-row{display:flex;justify-content:space-between;padding:6px 0;font-size:12px;border-bottom:1px solid #f1f5f9;}
+.rp-stats-val{font-weight:700;color:var(--g700);}
 
 /* CHAT */
 .chat-area{display:flex;flex-direction:column;overflow:hidden;background:var(--bg);position:relative;}
@@ -522,6 +540,83 @@ select.field-input{cursor:pointer;}
       </div>
     </div>
   </div>
+
+  <!-- RIGHT PANEL: Project info, news, social, ads -->
+  <aside class="right-panel">
+
+    <!-- About -->
+    <div class="rp-section">
+      <h3>🧬 About Bioinfor-Claw</h3>
+      <p>An AI-powered bioinformatics copilot with 50+ expert analysis skills. Built on the <strong>SKILL.md</strong> agent architecture — just describe what you need in plain English.</p>
+      <div style="margin-top:8px;">
+        <span class="rp-tag" style="background:#ecfdf5;color:#059669;">Open Source</span>
+        <span class="rp-tag" style="background:#eff6ff;color:#2563eb;">Agent System</span>
+        <span class="rp-tag" style="background:#fef3c7;color:#d97706;">Bioinformatics</span>
+      </div>
+    </div>
+
+    <!-- Live Stats -->
+    <div class="rp-section" id="rpStats">
+      <h3>📊 Live Statistics</h3>
+      <div class="rp-stats-row"><span>Total Analyses</span><span class="rp-stats-val" id="rpStatAnalyses">-</span></div>
+      <div class="rp-stats-row"><span>Total Visitors</span><span class="rp-stats-val" id="rpStatVisits">-</span></div>
+      <div class="rp-stats-row"><span>Active Today</span><span class="rp-stats-val" id="rpStatToday">-</span></div>
+      <div class="rp-stats-row" style="border:none"><span>Top Gene</span><span class="rp-stats-val" id="rpStatGene">-</span></div>
+    </div>
+
+    <!-- News / Updates -->
+    <div class="rp-section">
+      <h3>📰 News & Updates</h3>
+      <div class="rp-news">
+        <div class="rp-news-date">Apr 2026</div>
+        <div class="rp-news-title">🚀 v1.3 — Free trial mode, real cBioPortal co-expression, faster lab search</div>
+      </div>
+      <div class="rp-news">
+        <div class="rp-news-date">Apr 2026</div>
+        <div class="rp-news-title">🌐 Deployed on Render — try it without any setup!</div>
+      </div>
+      <div class="rp-news">
+        <div class="rp-news-date">Mar 2026</div>
+        <div class="rp-news-title">🧪 50+ skills covering TCGA, DepMap, GTEx, CRISPR, enrichment & more</div>
+      </div>
+    </div>
+
+    <!-- Social Links -->
+    <div class="rp-section">
+      <h3>🔗 Connect With Us</h3>
+      <a class="rp-link" href="https://github.com/MDhewei/bioinfor-claw" target="_blank">
+        <span class="rp-icon">📦</span>GitHub — Star & Contribute
+      </a>
+      <a class="rp-link" href="https://youtube.com/@YOUR_CHANNEL" target="_blank">
+        <span class="rp-icon">🎬</span>YouTube — Tutorials & Demos
+      </a>
+      <a class="rp-link" href="https://linkedin.com/in/YOUR_PROFILE" target="_blank">
+        <span class="rp-icon">💼</span>LinkedIn — Updates & Papers
+      </a>
+      <a class="rp-link" href="https://space.bilibili.com/YOUR_ID" target="_blank">
+        <span class="rp-icon">📺</span>Bilibili — 中文教程与演示
+      </a>
+      <a class="rp-link" href="mailto:bioinfor.claw@gmail.com">
+        <span class="rp-icon">✉️</span>Contact — bioinfor.claw@gmail.com
+      </a>
+    </div>
+
+    <!-- Ad Slot 1 -->
+    <div class="rp-section">
+      <div class="rp-ad-slot">
+        <span style="font-size:18px">📢</span>
+        <span>Advertisement Space</span>
+        <span style="font-size:10px">Contact us to place your ad here</span>
+      </div>
+    </div>
+
+    <!-- Powered by -->
+    <div style="text-align:center;font-size:11px;color:#94a3b8;padding:8px 0;">
+      Built with ❤️ by the Bioinfor-Claw team<br>
+      Powered by SKILL.md Agent Architecture
+    </div>
+
+  </aside>
 
 </div>
 
@@ -1162,6 +1257,7 @@ async function refreshLiveStats(){
     const url=(state.serverUrl===location.origin)?'/api/stats':state.serverUrl+'/api/stats';
     const r=await fetch(url,{signal:AbortSignal.timeout(3000)});
     const d=await r.json();
+    // Welcome banner stats
     const el=document.getElementById('liveStats');
     if(el) el.style.display='flex';
     const a=document.getElementById('statAnalyses');if(a) a.textContent=d.total_analyses||0;
@@ -1170,6 +1266,12 @@ async function refreshLiveStats(){
       const tg=document.getElementById('statTopGene');if(tg) tg.style.display='';
       const tgn=document.getElementById('statTopGeneName');if(tgn) tgn.textContent=d.top_genes[0][0];
     }
+    // Right panel stats
+    const rpa=document.getElementById('rpStatAnalyses');if(rpa) rpa.textContent=d.total_analyses||0;
+    const rpv=document.getElementById('rpStatVisits');if(rpv) rpv.textContent=d.total_visits||0;
+    const rpt=document.getElementById('rpStatToday');if(rpt) rpt.textContent=d.visitors_today||0;
+    const rpg=document.getElementById('rpStatGene');
+    if(rpg) rpg.textContent=(d.top_genes&&d.top_genes.length)?d.top_genes[0][0]:'-';
   }catch(e){console.log('[liveStats]',e);}
 }
 
