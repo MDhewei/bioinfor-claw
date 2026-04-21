@@ -37,11 +37,11 @@ input,textarea,select{font-family:inherit;}
 header{display:flex;align-items:center;justify-content:space-between;padding:0 18px 0 0;height:52px;background:var(--surf);border-bottom:1px solid var(--border);box-shadow:var(--sh);flex-shrink:0;z-index:20;gap:12px;}
 /* Wordmark area spans exactly the sidebar column width (320px) so it
    visually aligns with the sidebar below, with a matching right border. */
-.logo-area{display:flex;align-items:center;gap:11px;flex-shrink:0;width:320px;padding:0 18px;box-sizing:border-box;border-right:1px solid var(--border);height:100%;}
-.brand-icon{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--g500),var(--g700));display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 6px rgba(46,107,53,.25);flex-shrink:0;}
+.logo-area{display:flex;align-items:center;gap:12px;flex-shrink:0;width:280px;padding:0 18px;box-sizing:border-box;border-right:1px solid var(--border);height:100%;}
+.brand-icon{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--g500),var(--g700));display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 2px 8px rgba(46,107,53,.3);flex-shrink:0;}
 .brand-text{display:flex;flex-direction:column;line-height:1.1;min-width:0;}
-.brand-name{font-weight:700;font-size:15.5px;color:var(--g700);letter-spacing:-.3px;font-family:var(--mono);}
-.brand-tag{font-size:10.5px;color:var(--muted);letter-spacing:.3px;margin-top:2px;}
+.brand-name{font-weight:800;font-size:20px;color:var(--g700);letter-spacing:-.4px;font-family:var(--mono);}
+.brand-tag{display:none;}
 .logo-fb{font-family:var(--mono);font-weight:500;font-size:15px;color:var(--g700);display:none;}
 .llm-selector-wrap{display:flex;align-items:center;gap:8px;flex:1;justify-content:center;}
 .llm-selector-label{font-size:11px;color:var(--muted);white-space:nowrap;}
@@ -153,6 +153,15 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 @keyframes spinSlow{to{transform:rotate(360deg)}}
 .welcome h2{font-size:28px;font-weight:800;color:var(--g700);letter-spacing:-.6px;margin-top:4px;background:linear-gradient(135deg,var(--g700),var(--teal));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
 .welcome p{color:var(--text2);font-size:14.5px;line-height:1.75;max-width:480px;margin:0;}
+.hero-stats{display:flex;align-items:center;justify-content:center;gap:0;margin:8px 0 4px;padding:16px 32px;background:linear-gradient(135deg,#ecfdf5,#f0fdf4);border:1px solid #bbf7d0;border-radius:16px;box-shadow:0 4px 20px rgba(34,197,94,.1);}
+.hero-stat{text-align:center;padding:0 28px;}
+.hero-stat-num{font-size:42px;font-weight:900;letter-spacing:-1.5px;background:linear-gradient(135deg,var(--g700),var(--teal));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;line-height:1.1;}
+.hero-stat-lbl{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-top:2px;}
+.hero-stat-divider{width:1px;height:48px;background:linear-gradient(to bottom,transparent,#86efac,transparent);}
+.globe-wrap{position:relative;margin:4px 0 0;}
+.globe-wrap canvas{display:block;margin:0 auto;cursor:grab;}
+.globe-wrap canvas:active{cursor:grabbing;}
+.globe-label{text-align:center;font-size:12px;color:#64748b;font-weight:600;margin-top:2px;}
 .feature-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:100%;max-width:560px;margin-top:8px;}
 .feature-card{background:var(--surf);border:1px solid var(--border);border-radius:12px;padding:13px 14px;text-align:left;transition:all .2s;display:flex;gap:11px;align-items:flex-start;cursor:default;}
 .feature-card:hover{border-color:var(--g500);transform:translateY(-2px);box-shadow:0 4px 14px rgba(46,107,53,.1);}
@@ -477,6 +486,23 @@ select.field-input{cursor:pointer;}
         <h2>Your 24/7 Bioinformatics Copilot</h2>
         <p>Just describe what you want to analyse — the agent picks the right skill, runs the script, and hands back publication-ready results.</p>
 
+        <div class="hero-stats" id="heroStats">
+          <div class="hero-stat">
+            <div class="hero-stat-num" id="heroUsers">0</div>
+            <div class="hero-stat-lbl">Total Users</div>
+          </div>
+          <div class="hero-stat-divider"></div>
+          <div class="hero-stat">
+            <div class="hero-stat-num" id="heroAnalyses">0</div>
+            <div class="hero-stat-lbl">Analyses Completed</div>
+          </div>
+        </div>
+
+        <div class="globe-wrap" id="globeWrap">
+          <canvas id="globeCanvas" width="320" height="320"></canvas>
+          <div class="globe-label">🌍 Our users around the world</div>
+        </div>
+
         <div class="feature-grid">
           <div class="feature-card">
             <div class="fc-icon a">🔬</div>
@@ -516,12 +542,6 @@ select.field-input{cursor:pointer;}
         </div>
 
         <div class="welcome-note"><span>🎫</span><span><strong>Free trial active</strong> — 50 queries/day, no API key needed. For unlimited use, click <strong>⚙ Settings</strong> to add your own key.</span></div>
-        <div id="liveStats" style="display:none;margin:10px 0;padding:10px 16px;background:linear-gradient(135deg,#ecfdf5,#f0fdf4);border:1px solid #bbf7d0;border-radius:10px;font-size:12px;color:#166534;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-          <span style="font-weight:600">📊 Live</span>
-          <span>🧬 <strong id="statAnalyses">0</strong> analyses run</span>
-          <span>👥 <strong id="statVisitors">0</strong> visitors today</span>
-          <span id="statTopGene" style="display:none">🔥 Top gene: <strong id="statTopGeneName">-</strong></span>
-        </div>
         <!-- skill loader UI kept in DOM (hidden) so loader JS keeps working -->
         <div class="load-bar" style="display:none"><div class="load-fill" id="loadFill"></div></div>
         <div class="load-txt" id="loadTxt" style="display:none">Initialising…</div>
@@ -1325,8 +1345,158 @@ async function refreshLiveStats(){
     const rpt=document.getElementById('rpStatToday');if(rpt) rpt.textContent=d.visitors_today||0;
     const rpg=document.getElementById('rpStatGene');
     if(rpg) rpg.textContent=(d.top_genes&&d.top_genes.length)?d.top_genes[0][0]:'-';
+    // Hero stats (animated count-up)
+    animateCount('heroUsers',d.total_visits||0);
+    animateCount('heroAnalyses',d.total_analyses||0);
+    // Globe locations
+    if(d.locations&&d.locations.length) updateGlobeLocations(d.locations);
   }catch(e){console.log('[liveStats]',e);}
 }
+function animateCount(id,target){
+  const el=document.getElementById(id);if(!el) return;
+  const current=parseInt(el.textContent.replace(/,/g,''))||0;
+  if(current===target){el.textContent=target.toLocaleString();return;}
+  const duration=1200,start=performance.now();
+  const from=current;
+  function step(ts){
+    const p=Math.min((ts-start)/duration,1);
+    const eased=1-Math.pow(1-p,3);
+    el.textContent=Math.round(from+(target-from)*eased).toLocaleString();
+    if(p<1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+/* ── 3D Globe ── */
+const GLOBE_R=120, GLOBE_CX=160, GLOBE_CY=160;
+let _globeLocations=[], _globeAngle=0, _globeDrag=false, _globeLastX=0, _globeVel=0.003;
+let _globeFrame=null;
+
+function latLngTo3D(lat,lng,r){
+  const phi=(90-lat)*Math.PI/180, theta=(lng+180)*Math.PI/180;
+  return {x:-r*Math.sin(phi)*Math.cos(theta), y:r*Math.cos(phi), z:r*Math.sin(phi)*Math.sin(theta)};
+}
+function rotateY(p,a){
+  const c=Math.cos(a),s=Math.sin(a);
+  return {x:p.x*c+p.z*s, y:p.y, z:-p.x*s+p.z*c};
+}
+function updateGlobeLocations(locs){
+  _globeLocations=locs.map(l=>({...l, p3:latLngTo3D(l.lat,l.lng,GLOBE_R)}));
+  if(!_globeFrame) drawGlobeLoop();
+}
+
+// Continent outlines (simplified lon/lat polylines for major landmasses)
+const CONTINENT_PATHS=[
+  // North America
+  [[-130,50],[-125,60],[-110,68],[-90,70],[-80,62],[-65,47],[-75,35],[-82,25],[-98,20],[-105,22],[-118,33],[-125,48],[-130,50]],
+  // South America
+  [[-80,10],[-75,5],[-60,-5],[-50,-10],[-40,-15],[-35,-22],[-50,-35],[-55,-40],[-68,-55],[-75,-45],[-70,-18],[-80,0],[-80,10]],
+  // Europe
+  [[-10,36],[0,40],[3,43],[10,44],[15,42],[28,41],[30,45],[25,55],[20,55],[10,55],[5,52],[-5,50],[-10,36]],
+  // Africa
+  [[-17,15],[-5,36],[10,37],[30,32],[35,30],[42,12],[50,5],[40,-15],[30,-34],[20,-35],[12,-18],[5,5],[-5,5],[-17,15]],
+  // Asia (simplified)
+  [[30,45],[40,42],[50,40],[55,37],[60,25],[70,20],[80,10],[90,22],[100,20],[105,10],[110,20],[120,25],[130,35],[140,45],[135,55],[120,55],[90,50],[60,55],[40,55],[30,45]],
+  // Australia
+  [[115,-20],[130,-12],[150,-15],[153,-28],[140,-38],[130,-35],[115,-32],[115,-20]],
+];
+
+function drawGlobe(){
+  const cv=document.getElementById('globeCanvas');if(!cv) return;
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  // Ocean circle with gradient
+  const grad=ctx.createRadialGradient(GLOBE_CX-20,GLOBE_CY-30,10,GLOBE_CX,GLOBE_CY,GLOBE_R);
+  grad.addColorStop(0,'#e0f7fa');grad.addColorStop(0.7,'#b2ebf2');grad.addColorStop(1,'#80deea');
+  ctx.beginPath();ctx.arc(GLOBE_CX,GLOBE_CY,GLOBE_R,0,Math.PI*2);ctx.fillStyle=grad;ctx.fill();
+
+  // Atmosphere glow
+  const glow=ctx.createRadialGradient(GLOBE_CX,GLOBE_CY,GLOBE_R-2,GLOBE_CX,GLOBE_CY,GLOBE_R+12);
+  glow.addColorStop(0,'rgba(34,197,94,0)');glow.addColorStop(0.5,'rgba(34,197,94,0.08)');glow.addColorStop(1,'rgba(34,197,94,0)');
+  ctx.beginPath();ctx.arc(GLOBE_CX,GLOBE_CY,GLOBE_R+12,0,Math.PI*2);ctx.fillStyle=glow;ctx.fill();
+
+  // Grid lines (meridians + parallels)
+  ctx.save();ctx.beginPath();ctx.arc(GLOBE_CX,GLOBE_CY,GLOBE_R,0,Math.PI*2);ctx.clip();
+  ctx.strokeStyle='rgba(0,150,136,0.1)';ctx.lineWidth=0.5;
+  for(let lng=-180;lng<180;lng+=30){
+    ctx.beginPath();
+    for(let lat=-90;lat<=90;lat+=5){
+      const p=rotateY(latLngTo3D(lat,lng,GLOBE_R),_globeAngle);
+      const sx=GLOBE_CX+p.x,sy=GLOBE_CY-p.y;
+      if(lat===-90) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
+    }
+    ctx.stroke();
+  }
+  for(let lat=-60;lat<=60;lat+=30){
+    ctx.beginPath();
+    for(let lng=-180;lng<=180;lng+=5){
+      const p=rotateY(latLngTo3D(lat,lng,GLOBE_R),_globeAngle);
+      const sx=GLOBE_CX+p.x,sy=GLOBE_CY-p.y;
+      if(lng===-180) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
+    }
+    ctx.stroke();
+  }
+
+  // Continents
+  ctx.strokeStyle='rgba(46,125,50,0.35)';ctx.fillStyle='rgba(46,125,50,0.12)';ctx.lineWidth=1.2;
+  CONTINENT_PATHS.forEach(path=>{
+    ctx.beginPath();
+    let started=false;
+    path.forEach(([lng,lat],i)=>{
+      const p=rotateY(latLngTo3D(lat,lng,GLOBE_R),_globeAngle);
+      if(p.z<0) {started=false;return;} // behind globe
+      const sx=GLOBE_CX+p.x,sy=GLOBE_CY-p.y;
+      if(!started){ctx.moveTo(sx,sy);started=true;} else ctx.lineTo(sx,sy);
+    });
+    ctx.fill();ctx.stroke();
+  });
+
+  // User location dots
+  _globeLocations.forEach(loc=>{
+    const p=rotateY(loc.p3,_globeAngle);
+    if(p.z<0) return; // behind globe
+    const sx=GLOBE_CX+p.x, sy=GLOBE_CY-p.y;
+    const scale=0.5+0.5*(p.z/GLOBE_R); // depth-based size
+    const dotR=Math.max(3,Math.min(8,2+Math.log2(loc.count+1)*2))*scale;
+    // Glow
+    const dg=ctx.createRadialGradient(sx,sy,0,sx,sy,dotR*3);
+    dg.addColorStop(0,'rgba(239,68,68,0.4)');dg.addColorStop(1,'rgba(239,68,68,0)');
+    ctx.beginPath();ctx.arc(sx,sy,dotR*3,0,Math.PI*2);ctx.fillStyle=dg;ctx.fill();
+    // Dot
+    ctx.beginPath();ctx.arc(sx,sy,dotR,0,Math.PI*2);
+    ctx.fillStyle='rgba(239,68,68,'+(.6+.4*scale)+')';ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.8)';ctx.lineWidth=1;ctx.stroke();
+  });
+
+  // Specular highlight
+  const spec=ctx.createRadialGradient(GLOBE_CX-35,GLOBE_CY-40,5,GLOBE_CX-35,GLOBE_CY-40,70);
+  spec.addColorStop(0,'rgba(255,255,255,0.25)');spec.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.beginPath();ctx.arc(GLOBE_CX,GLOBE_CY,GLOBE_R,0,Math.PI*2);ctx.fillStyle=spec;ctx.fill();
+
+  ctx.restore();
+}
+
+function drawGlobeLoop(){
+  if(!_globeDrag) _globeAngle+=_globeVel;
+  drawGlobe();
+  _globeFrame=requestAnimationFrame(drawGlobeLoop);
+}
+
+// Mouse drag to rotate
+(function(){
+  const cv=document.getElementById('globeCanvas');if(!cv) return;
+  cv.addEventListener('mousedown',e=>{_globeDrag=true;_globeLastX=e.clientX;cv.style.cursor='grabbing';});
+  window.addEventListener('mousemove',e=>{if(!_globeDrag) return;const dx=e.clientX-_globeLastX;_globeAngle+=dx*0.008;_globeLastX=e.clientX;});
+  window.addEventListener('mouseup',()=>{_globeDrag=false;const cv=document.getElementById('globeCanvas');if(cv) cv.style.cursor='grab';});
+  // Touch support
+  cv.addEventListener('touchstart',e=>{_globeDrag=true;_globeLastX=e.touches[0].clientX;},{passive:true});
+  cv.addEventListener('touchmove',e=>{if(!_globeDrag) return;const dx=e.touches[0].clientX-_globeLastX;_globeAngle+=dx*0.008;_globeLastX=e.touches[0].clientX;},{passive:true});
+  cv.addEventListener('touchend',()=>{_globeDrag=false;});
+})();
+
+// Start globe animation immediately (locations added when stats load)
+drawGlobeLoop();
 
 /* ── Mini-Games ── */
 let _dnaCards=[], _dnaFlipped=[], _dnaMoves=0, _dnaPairs=0, _dnaLocked=false;

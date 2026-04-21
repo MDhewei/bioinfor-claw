@@ -1150,6 +1150,7 @@ _analytics = {
     'skills_used': {},          # skill_key -> count (all time)
     'recent_analyses': [],      # last 50: {time, skill, gene, ip_hash}
     'daily_history': {},        # date -> {visits, analyses}
+    'user_locations': {},       # "lat,lng" -> {lat, lng, count, city, country}
     'start_time': datetime.now().isoformat(),
 }
 _ANALYTICS_FILE = None  # set in main()
@@ -1174,12 +1175,31 @@ def _load_analytics():
         try:
             data = _json.loads(_ANALYTICS_FILE.read_text(encoding='utf-8'))
             for k in ('total_analyses', 'total_visits', 'genes_searched',
-                      'skills_used', 'recent_analyses', 'daily_history', 'start_time'):
+                      'skills_used', 'recent_analyses', 'daily_history',
+                      'user_locations', 'start_time'):
                 if k in data:
                     _analytics[k] = data[k]
             print(f"  📊  Loaded analytics: {_analytics['total_analyses']} analyses, {_analytics['total_visits']} visits")
         except Exception as e:
             print(f"  [analytics] load error: {e}")
+
+def _geolocate_ip(ip):
+    """Look up approximate lat/lng for an IP (non-blocking, best-effort)."""
+    try:
+        # Skip private / loopback IPs
+        if ip.startswith(('127.', '10.', '192.168.', '172.', '::1', 'fe80')):
+            return None
+        r = _requests.get(f'http://ip-api.com/json/{ip}?fields=status,lat,lon,city,country',
+                          timeout=2)
+        d = r.json()
+        if d.get('status') == 'success':
+            return {'lat': d['lat'], 'lng': d['lon'],
+                    'city': d.get('city', ''), 'country': d.get('country', '')}
+    except Exception:
+        pass
+    return None
+
+_geo_cache = {}  # ip -> geo result (avoid repeated lookups)
 
 def _track_visit(ip):
     """Track a page visit."""
@@ -1191,6 +1211,22 @@ def _track_visit(ip):
         if today not in _analytics['daily_history']:
             _analytics['daily_history'][today] = {'visits': 0, 'analyses': 0}
         _analytics['daily_history'][today]['visits'] += 1
+    # Geolocate in background thread (don't block the response)
+    if ip not in _geo_cache:
+        def _do_geo():
+            geo = _geolocate_ip(ip)
+            _geo_cache[ip] = geo
+            if geo:
+                key = f"{round(geo['lat'],1)},{round(geo['lng'],1)}"
+                with _analytics_lock:
+                    if key in _analytics['user_locations']:
+                        _analytics['user_locations'][key]['count'] += 1
+                    else:
+                        _analytics['user_locations'][key] = {
+                            'lat': geo['lat'], 'lng': geo['lng'],
+                            'count': 1, 'city': geo['city'], 'country': geo['country']
+                        }
+        _threading.Thread(target=_do_geo, daemon=True).start()
 
 def _track_analysis(ip, skill_key='', gene=''):
     """Track an analysis run."""
@@ -1292,6 +1328,8 @@ class Handler(BaseHTTPRequestHandler):
                                     key=lambda x: -x[1])[:10]
                 visitors_today = len(_analytics['visitors_today'])
                 analyses_today = sum(_analytics['analyses_today'].values())
+            with _analytics_lock:
+                locations = list(_analytics['user_locations'].values())
             self._send_json({
                 'total_analyses': _analytics['total_analyses'],
                 'total_visits': _analytics['total_visits'],
@@ -1300,6 +1338,7 @@ class Handler(BaseHTTPRequestHandler):
                 'top_genes': top_genes,
                 'top_skills': top_skills,
                 'uptime_since': _analytics['start_time'],
+                'locations': locations,
             })
 
         elif path == '/admin':
