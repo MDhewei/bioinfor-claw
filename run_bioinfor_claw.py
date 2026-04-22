@@ -1020,7 +1020,7 @@ async function runSkillOnServer(skillKey, inputText, inputFilename, skillContent
   // Extract script name from SKILL.md
   let scriptName = null;
   if (skillContent) {{
-    const m = skillContent.match(/python scripts\/([\S]+\.py)/);
+    const m = skillContent.match(/python scripts\\/([\\S]+\\.py)/);
     if (m) scriptName = m[1];
   }}
   if (!scriptName) {{
@@ -1190,7 +1190,7 @@ def _load_analytics():
             r = _requests.get(_ANALYTICS_URL, timeout=5)
             if r.status_code == 200:
                 data = r.json()
-                if data and data.get('total_analyses', 0) > 0:
+                if data and (data.get('total_visits', 0) > 0 or data.get('total_analyses', 0) > 0 or len(data.get('unique_ips', [])) > 0):
                     _apply_analytics(data)
                     print(f"  ☁️  Loaded analytics from cloud: {_analytics['total_analyses']} analyses, {len(_unique_ip_set)} unique users")
                     loaded = True
