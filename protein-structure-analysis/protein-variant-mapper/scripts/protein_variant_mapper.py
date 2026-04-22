@@ -503,6 +503,20 @@ def render_variant_viewer(
     with open(pdb_path) as f:
         pdb_data = f.read()
 
+    # Pre-compute Cα coordinates from BioPython for reliable label placement
+    parser = PDBParser(QUIET=True)
+    structure_obj = parser.get_structure("var", pdb_path)
+    ca_coords: Dict[Tuple[str, int], Tuple[float, float, float]] = {}
+    for model in structure_obj:
+        for chain in model:
+            for residue in chain:
+                if "CA" in residue:
+                    ca = residue["CA"].get_vector()
+                    ca_coords[(chain.id, residue.id[1])] = (
+                        float(ca[0]), float(ca[1]), float(ca[2]),
+                    )
+        break  # first model only
+
     view = py3Dmol.view(width=900, height=650)
     view.addModel(pdb_data, "pdb")
 
@@ -525,24 +539,28 @@ def render_variant_viewer(
         # Sticks for full residue
         view.addStyle(sel, {"stick": {"color": color, "radius": 0.18}})
 
-        # Label: "A123V (pathogenic)"
-        view.addLabel(
-            row["variant"],
-            {
-                "position":         {"chain": row["chain"], "resi": int(row["pos"]), "atom": "CA"},
-                "font":             "Arial",
-                "fontSize":         12,
-                "fontColor":        "black",
-                "fontOpacity":      1.0,
-                "backgroundOpacity": 0.85,
-                "backgroundColor":  "white",
-                "borderThickness":  1.0,
-                "borderColor":      color,
-                "borderOpacity":    1.0,
-                "inFront":          True,
-                "showBackground":   True,
-            },
-        )
+        # Label with explicit x/y/z coordinates (py3Dmol position selector
+        # with chain/resi/atom is unreliable; explicit coords always work)
+        coord_key = (row["chain"], int(row["pos"]))
+        if coord_key in ca_coords:
+            x, y, z = ca_coords[coord_key]
+            view.addLabel(
+                row["variant"],
+                {
+                    "position":         {"x": x, "y": y + 1.5, "z": z},
+                    "font":             "Arial",
+                    "fontSize":         12,
+                    "fontColor":        "black",
+                    "fontOpacity":      1.0,
+                    "backgroundOpacity": 0.85,
+                    "backgroundColor":  "white",
+                    "borderThickness":  1.0,
+                    "borderColor":      color,
+                    "borderOpacity":    1.0,
+                    "inFront":          True,
+                    "showBackground":   True,
+                },
+            )
 
         if row["impact_class"] not in seen_classes:
             seen_classes.add(row["impact_class"])
