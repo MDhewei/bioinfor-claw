@@ -1124,7 +1124,7 @@ from collections import defaultdict as _defaultdict
 import threading as _threading
 
 # ── Rate limiter for free-trial proxy ──────────────────────────────────────
-_DAILY_LIMIT = 50
+_DAILY_LIMIT = 24
 _rate_counts = _defaultdict(lambda: {'date': '', 'count': 0})
 
 def _check_rate_limit(ip):
@@ -1512,7 +1512,7 @@ class Handler(BaseHTTPRequestHandler):
             allowed, remaining = _check_rate_limit(client_ip)
             if not allowed:
                 self._send_json({
-                    'error': 'Daily free trial limit reached (20/day). Please enter your own API key to continue.',
+                    'error': 'Daily free trial limit reached (24/day). Please enter your own API key to continue.',
                     'quota': {'limit': _DAILY_LIMIT, 'remaining': 0}
                 }, 429)
                 return
