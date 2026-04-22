@@ -60,6 +60,36 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 /* LAYOUT */
 .workspace{flex:1;display:grid;grid-template-columns:280px 1fr 300px;overflow:hidden;}
 @media(max-width:1100px){.workspace{grid-template-columns:1fr;}.sidebar,.right-panel{display:none!important;}}
+/* ── Mobile (phones) ── */
+@media(max-width:600px){
+  header{padding:0 10px 0 0;height:48px;gap:6px;}
+  .logo-area{width:auto;padding:0 10px;border-right:none;gap:8px;}
+  .brand-icon{width:32px;height:32px;font-size:17px;}
+  .brand-name{font-size:16px;}
+  .llm-selector-wrap{display:none;}
+  .header-right .hbtn{padding:4px 8px;font-size:10px;}
+  .header-right .hbadge{padding:3px 7px;font-size:10px;}
+  .welcome{padding:24px 16px 20px;gap:12px;}
+  .hero-icon{width:72px;height:72px;font-size:36px;border-radius:18px;}
+  .welcome h2{font-size:22px;}
+  .hero-stats{padding:12px 16px;gap:0;}
+  .hero-stat{padding:0 16px;}
+  .hero-stat-num{font-size:28px;}
+  .hero-stat-lbl{font-size:10px;letter-spacing:.5px;}
+  .hero-stat-divider{height:36px;}
+  .feature-grid{grid-template-columns:1fr;gap:8px;max-width:100%;}
+  .feature-card{padding:10px 12px;}
+  .example-prompts{gap:5px;max-width:100%;}
+  .ep-chip{font-size:11px;padding:6px 10px;}
+  .welcome-note{font-size:10.5px;padding:8px 10px;}
+  .input-area{margin:8px;border-radius:14px;padding:8px 10px;}
+  #userInput{font-size:14px;}
+  .input-meta{padding:0 10px;font-size:10px;}
+  .msg.user{max-width:85%;}
+  .msg.assistant{max-width:95%;}
+  .bubble{padding:10px 12px;font-size:13px;}
+  .modal{width:95vw;margin:10px;}
+}
 
 /* SIDEBAR */
 .sidebar{border-right:1px solid var(--border);background:var(--surf);display:flex;flex-direction:column;overflow:hidden;}
