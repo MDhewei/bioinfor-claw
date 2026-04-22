@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://bioinfor-claw.onrender.com"><img src="https://img.shields.io/badge/🌐%20try%20it%20online-free-ff6f00?style=flat-square" alt="Try it online"></a>
   <a href="#60-second-quick-start"><img src="https://img.shields.io/badge/quick%20start-60%20sec-2e7d32?style=flat-square" alt="Quick start"></a>
   <img src="https://img.shields.io/badge/skills-50-0b8a7a?style=flat-square" alt="50 skills">
   <img src="https://img.shields.io/badge/scenarios-10-0b8a7a?style=flat-square" alt="10 scenarios">
@@ -34,8 +35,21 @@ This dual nature is intentional. Use Bioinfor-Claw on its own as a "desktop AI b
 
 ---
 
+## Try it online
+
+**No installation needed.** A free hosted instance is available at:
+
+> **https://bioinfor-claw.onrender.com**
+
+The online version includes all 50 skills and comes with a built-in free trial (24 analyses per day) powered by MiniMax — no API key required to get started. Bring your own API key from any supported provider (Anthropic, OpenAI, Google, Mistral, or any OpenAI-compatible endpoint) for unlimited use.
+
+> **Note:** The free instance runs on a shared server and may take 30–60 seconds to wake up on first visit. For heavy or private workloads, we recommend running locally or self-hosting.
+
+---
+
 ## Table of contents
 
+- [Try it online](#try-it-online)
 - [Why Bioinfor-Claw](#why)
 - [Key capabilities at a glance](#capabilities)
 - [60-second quick start](#quickstart)
@@ -791,7 +805,7 @@ When contributing, follow these conventions:
 - Bulk RNA-seq from GEO with automated normalization
 - Multi-omics integration (correlate expression + CNV + mutation per sample)
 - End-to-end workflow templates (pre-configured skill chains the agent can launch in one go)
-- Server-side LLM proxy with per-user quotas (so a hosted instance can serve multiple users without each providing their own API key)
+- ~~Server-side LLM proxy with per-user quotas~~ (**done** — free trial with 24 analyses/day at [bioinfor-claw.onrender.com](https://bioinfor-claw.onrender.com))
 
 ### Mid-term
 

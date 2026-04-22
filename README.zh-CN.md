@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://bioinfor-claw.onrender.com"><img src="https://img.shields.io/badge/🌐%20在线体验-免费-ff6f00?style=flat-square" alt="在线体验"></a>
   <a href="#quickstart"><img src="https://img.shields.io/badge/%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B-60%20%E7%A7%92-2e7d32?style=flat-square" alt="快速开始"></a>
   <img src="https://img.shields.io/badge/skills-50-0b8a7a?style=flat-square" alt="50 项技能">
   <img src="https://img.shields.io/badge/scenarios-10-0b8a7a?style=flat-square" alt="10 大场景">
@@ -30,6 +31,7 @@ Bioinfor-Claw 在同一个项目中提供两件事:
 
 ## 目录
 
+- [在线体验](#try-it-online)
 - [为什么选择 Bioinfor-Claw](#why)
 - [核心能力一览](#capabilities)
 - [60 秒快速开始](#quickstart)
@@ -48,6 +50,19 @@ Bioinfor-Claw 在同一个项目中提供两件事:
 - [路线图](#roadmap)
 - [贡献指南](#contributing)
 - [许可证与联系方式](#license)
+
+---
+
+<a id="try-it-online"></a>
+## 在线体验
+
+**无需安装，打开即用。** 免费在线实例地址：
+
+> **https://bioinfor-claw.onrender.com**
+
+在线版包含全部 50 项技能，内置免费试用额度（每天 24 次分析），由 MiniMax 驱动 —— 无需 API Key 即可开始体验。也可以输入自己的 API Key（Anthropic、OpenAI、Google、Mistral 或任何 OpenAI 兼容端点）以获得无限制使用。
+
+> **提示：** 免费实例运行在共享服务器上，首次访问可能需要 30–60 秒唤醒。如需处理大量或私密数据，建议本地运行或自行部署。
 
 ---
 
