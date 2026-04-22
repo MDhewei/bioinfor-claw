@@ -1232,11 +1232,16 @@ def _geolocate_ip(ip):
 
 _geo_cache = {}  # ip -> geo result (avoid repeated lookups)
 
+import hashlib as _hashlib
+
+def _ip_hash(ip):
+    """Deterministic, privacy-safe hash of an IP address."""
+    return _hashlib.md5(ip.encode()).hexdigest()[:10]
+
 def _track_visit(ip):
     """Track a page visit."""
     today = datetime.now().strftime('%Y-%m-%d')
-    # Hash IP for privacy-safe unique tracking
-    ip_hash = str(hash(ip))[-8:]
+    ip_hash = _ip_hash(ip)
     with _analytics_lock:
         _analytics['total_visits'] += 1
         _analytics['visitors_today'][ip] = datetime.now().isoformat()
@@ -1271,7 +1276,7 @@ def _track_visit(ip):
 def _track_analysis(ip, skill_key='', gene=''):
     """Track an analysis run."""
     today = datetime.now().strftime('%Y-%m-%d')
-    ip_hash = str(hash(ip))[-6:]  # privacy: only store hash suffix
+    ip_hash = _ip_hash(ip)
     with _analytics_lock:
         _analytics['total_analyses'] += 1
         _analytics['analyses_today'][ip] = _analytics['analyses_today'].get(ip, 0) + 1
