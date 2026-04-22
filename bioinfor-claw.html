@@ -58,7 +58,21 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 .status-dot{width:8px;height:8px;border-radius:50%;background:var(--g500);box-shadow:0 0 0 2px var(--g300);animation:pulse 2s infinite;}
 
 /* LAYOUT */
-.workspace{flex:1;display:grid;grid-template-columns:320px 1fr;overflow:hidden;}
+.workspace{flex:1;display:grid;grid-template-columns:300px 1fr 300px;overflow:hidden;}
+@media(max-width:1100px){.workspace{grid-template-columns:1fr;}.sidebar,.right-panel{display:none!important;}}
+
+/* RIGHT PANEL */
+.right-panel{border-left:1px solid var(--border);background:var(--surf);display:flex;flex-direction:column;overflow-y:auto;padding:16px;gap:16px;font-size:13px;}
+.rp-section{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.rp-section h3{font-size:13px;font-weight:700;color:var(--g700);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.rp-section p{font-size:12px;line-height:1.6;color:#475569;margin-bottom:6px;}
+.game-tab{padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:11px;font-weight:600;color:#475569;transition:all .2s;}
+.game-tab:hover{background:#f0fdf4;border-color:var(--g400);}
+.game-tab.active{background:var(--g700);color:#fff;border-color:var(--g700);}
+.dna-card{width:100%;aspect-ratio:1;border:2px solid var(--border);border-radius:8px;font-size:20px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;background:#f8fafc;transition:all .3s;user-select:none;}
+.dna-card.flipped{border-color:var(--g500);background:#f0fdf4;}
+.dna-card.matched{border-color:#22c55e;background:#dcfce7;opacity:.7;pointer-events:none;}
+.dna-card:not(.flipped):not(.matched):hover{background:#f1f5f9;border-color:#94a3b8;}
 
 /* SIDEBAR */
 .sidebar{border-right:1px solid var(--border);background:var(--surf);display:flex;flex-direction:column;overflow:hidden;}
@@ -508,6 +522,123 @@ select.field-input{cursor:pointer;}
       </div>
     </div>
   </div>
+
+  <!-- RIGHT PANEL: Games & Social -->
+  <aside class="right-panel">
+
+    <!-- Mini Games -->
+    <div class="rp-section">
+      <h3>🎮 Play While You Wait</h3>
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">
+        <button onclick="startGame('dna')" class="game-tab active" id="gt-dna">🧬 DNA Match</button>
+        <button onclick="startGame('snake')" class="game-tab" id="gt-snake">🐍 Snake</button>
+        <button onclick="startGame('scramble')" class="game-tab" id="gt-scramble">🔤 Gene Scramble</button>
+        <button onclick="startGame('tetris')" class="game-tab" id="gt-tetris">🧱 Tetris</button>
+      </div>
+
+      <!-- DNA Memory Match -->
+      <div id="game-dna">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Match the nucleotide base pairs! Flip two cards to find A-T and G-C pairs.</div>
+        <div id="dnaBoard" style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+          <span style="font-size:12px;color:#475569;">Moves: <strong id="dnaMoves">0</strong> | Pairs: <strong id="dnaPairs">0</strong>/8</span>
+          <button onclick="initDnaGame()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">New Game</button>
+        </div>
+      </div>
+
+      <!-- Snake Game -->
+      <div id="game-snake" style="display:none;">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Guide the DNA strand! Eat nucleotides to grow. Arrow keys or swipe to move.</div>
+        <canvas id="snakeCanvas" width="264" height="200" style="border:1px solid var(--border);border-radius:6px;background:#f0fdf4;width:100%;"></canvas>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+          <span style="font-size:12px;color:#475569;">Score: <strong id="snakeScore">0</strong> | Best: <strong id="snakeBest">0</strong></span>
+          <button onclick="initSnakeGame()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Restart</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;margin-top:6px;">
+          <button onclick="snakeDir(0,-1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↑</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;">
+          <button onclick="snakeDir(-1,0)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">←</button>
+          <button onclick="snakeDir(0,1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↓</button>
+          <button onclick="snakeDir(1,0)" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">→</button>
+        </div>
+      </div>
+
+      <!-- Gene Scramble -->
+      <div id="game-scramble" style="display:none;">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Unscramble the gene name! These are real human genes.</div>
+        <div id="scrambleWord" style="font-size:28px;font-weight:800;text-align:center;letter-spacing:6px;color:var(--g700);padding:16px 0;font-family:monospace;"></div>
+        <div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:8px;" id="scrambleHint"></div>
+        <div style="display:flex;gap:6px;">
+          <input id="scrambleInput" placeholder="Type your guess…" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter')checkScramble()">
+          <button onclick="checkScramble()" style="padding:8px 14px;background:var(--g700);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Check</button>
+        </div>
+        <div id="scrambleResult" style="text-align:center;margin-top:8px;font-size:12px;min-height:20px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+          <span style="font-size:12px;color:#475569;">Streak: <strong id="scrambleStreak">0</strong></span>
+          <button onclick="newScramble()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Skip →</button>
+        </div>
+      </div>
+
+      <!-- Tetris -->
+      <div id="game-tetris" style="display:none;">
+        <div style="font-size:11px;color:#64748b;margin-bottom:8px;">Classic blocks! Arrow keys or buttons to move & rotate. Clear lines to score!</div>
+        <canvas id="tetrisCanvas" width="200" height="400" style="border:1px solid var(--border);border-radius:6px;background:#0f172a;display:block;margin:0 auto;"></canvas>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+          <span style="font-size:12px;color:#475569;">Score: <strong id="tetrisScore">0</strong> | Lines: <strong id="tetrisLines">0</strong></span>
+          <button onclick="initTetris()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Restart</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;margin-top:6px;">
+          <button onclick="tetrisMove('rotate')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↻</button>
+        </div>
+        <div style="display:flex;justify-content:center;gap:4px;">
+          <button onclick="tetrisMove('left')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">←</button>
+          <button onclick="tetrisMove('down')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">↓</button>
+          <button onclick="tetrisMove('right')" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">→</button>
+        </div>
+        <div style="display:flex;justify-content:center;margin-top:4px;">
+          <button onclick="tetrisMove('drop')" style="padding:4px 16px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:11px;">⏬ Drop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Follow Us -->
+    <div class="rp-section">
+      <h3>📣 Follow Us for News & Updates</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;">
+        <a href="https://github.com/MDhewei/bioinfor-claw" target="_blank" style="display:flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:#24292f;font-size:12px;font-weight:600;background:#f8fafc;transition:all .2s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='#f8fafc'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#24292f"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+          GitHub
+        </a>
+        <a href="https://www.linkedin.com/in/wei-he-867a4a114/" target="_blank" style="display:flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:#0a66c2;font-size:12px;font-weight:600;background:#f8fafc;transition:all .2s;" onmouseover="this.style.background='#eff6ff'" onmouseout="this.style.background='#f8fafc'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#0a66c2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          LinkedIn
+        </a>
+        <a href="https://x.com/hwkobe" target="_blank" style="display:flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:#000;font-size:12px;font-weight:600;background:#f8fafc;transition:all .2s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='#f8fafc'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="#000"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          X
+        </a>
+        <a href="https://www.youtube.com/@bioinforbricker" target="_blank" style="display:flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:#ff0000;font-size:12px;font-weight:600;background:#f8fafc;transition:all .2s;" onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='#f8fafc'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#ff0000"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+          YouTube
+        </a>
+        <a href="https://space.bilibili.com/1605459521" target="_blank" style="display:flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:#00a1d6;font-size:12px;font-weight:600;background:#f8fafc;transition:all .2s;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#f8fafc'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#00a1d6"><path d="M17.813 4.653h.854c1.51.054 2.769.578 3.773 1.574 1.004.995 1.524 2.249 1.56 3.76v7.36c-.036 1.51-.556 2.769-1.56 3.773s-2.262 1.524-3.773 1.56H5.333c-1.51-.036-2.769-.556-3.773-1.56S.036 18.858 0 17.347v-7.36c.036-1.511.556-2.765 1.56-3.76 1.004-.996 2.262-1.52 3.773-1.574h.774l-1.174-1.12a1.234 1.234 0 01-.373-.906c0-.356.124-.658.373-.907l.027-.027c.267-.249.573-.373.92-.373.347 0 .653.124.92.373L9.653 4.44c.071.071.134.142.187.213h4.267a.836.836 0 01.16-.213l2.853-2.747c.267-.249.573-.373.92-.373.347 0 .662.151.929.4.267.249.391.551.391.907 0 .355-.124.657-.373.906zM5.333 7.24c-.746.018-1.373.276-1.88.773-.506.498-.769 1.13-.786 1.894v7.52c.017.764.28 1.395.786 1.893.507.498 1.134.756 1.88.773h13.334c.746-.017 1.373-.275 1.88-.773.506-.498.769-1.129.786-1.893v-7.52c-.017-.765-.28-1.396-.786-1.894-.507-.497-1.134-.755-1.88-.773zM8 11.107c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c.017-.391.15-.711.4-.96.249-.249.56-.373.933-.373zm8 0c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c.017-.391.15-.711.4-.96.249-.249.56-.373.933-.373z"/></svg>
+          Bilibili
+        </a>
+        <a href="#" target="_blank" style="display:flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:#ff2442;font-size:12px;font-weight:600;background:#f8fafc;transition:all .2s;" onmouseover="this.style.background='#fff1f2'" onmouseout="this.style.background='#f8fafc'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#ff2442"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.8 7.2h-2.4c-.3-1.2-.9-1.8-1.8-1.8-.6 0-1.05.3-1.35.75-.3.45-.45 1.05-.45 1.95v1.8c0 .9.15 1.5.45 1.95.3.45.75.75 1.35.75.9 0 1.5-.6 1.8-1.8h2.4c-.15 1.2-.6 2.1-1.35 2.85-.75.75-1.65 1.05-2.85 1.05-1.35 0-2.4-.45-3.15-1.35-.75-.9-1.05-2.1-1.05-3.45 0-1.35.375-2.475 1.05-3.375.75-.9 1.8-1.35 3.15-1.35 1.2 0 2.1.375 2.85 1.05.75.75 1.2 1.65 1.35 2.85z"/></svg>
+          小红书
+        </a>
+      </div>
+    </div>
+
+    <!-- Contact -->
+    <div style="margin-top:auto;padding:10px 16px;border-top:1px solid var(--border);text-align:center;font-size:11px;color:#94a3b8;">
+      <a href="mailto:bioinfor.claw@gmail.com" style="color:#64748b;text-decoration:none;">✉️ bioinfor.claw@gmail.com</a>
+    </div>
+
+  </aside>
 
 </div>
 
@@ -1112,6 +1243,288 @@ window.onload = async () => {
   if(window._bundleReady) await window._bundleReady;
   await loadAllSkills();
 };
+
+/* ── Mini-Games ── */
+let _dnaCards=[], _dnaFlipped=[], _dnaMoves=0, _dnaPairs=0, _dnaLocked=false;
+let _snake, _snakeFood, _snakeDir, _snakeScore=0, _snakeBest=0, _snakeTimer=null;
+let _scrambleAnswer='', _scrambleStreak=0;
+
+function startGame(id){
+  ['dna','snake','scramble','tetris'].forEach(g=>{
+    document.getElementById('game-'+g).style.display=(g===id)?'':'none';
+    const t=document.getElementById('gt-'+g);
+    if(t) t.classList.toggle('active',g===id);
+  });
+  if(id==='snake') initSnakeGame();
+  if(id==='tetris') initTetris();
+}
+
+// ─── DNA Memory Match ───
+function initDnaGame(){
+  const bases=['A','T','G','C','A','T','G','C','A','T','G','C','A','T','G','C'];
+  for(let i=bases.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[bases[i],bases[j]]=[bases[j],bases[i]];}
+  _dnaCards=bases.map((b,i)=>({base:b,id:i,flipped:false,matched:false}));
+  _dnaFlipped=[];_dnaMoves=0;_dnaPairs=0;_dnaLocked=false;
+  document.getElementById('dnaMoves').textContent='0';
+  document.getElementById('dnaPairs').textContent='0';
+  renderDnaBoard();
+}
+function renderDnaBoard(){
+  const board=document.getElementById('dnaBoard');
+  board.innerHTML=_dnaCards.map((c,i)=>{
+    const cls='dna-card'+(c.flipped?' flipped':'')+(c.matched?' matched':'');
+    const color={'A':'#ef4444','T':'#3b82f6','G':'#22c55e','C':'#f59e0b'}[c.base]||'#333';
+    const txt=(c.flipped||c.matched)?`<span style="color:${color}">${c.base}</span>`:'?';
+    return `<div class="${cls}" onclick="flipDna(${i})">${txt}</div>`;
+  }).join('');
+}
+function flipDna(i){
+  if(_dnaLocked||_dnaCards[i].flipped||_dnaCards[i].matched) return;
+  _dnaCards[i].flipped=true;_dnaFlipped.push(i);
+  renderDnaBoard();
+  if(_dnaFlipped.length===2){
+    _dnaLocked=true;_dnaMoves++;
+    document.getElementById('dnaMoves').textContent=_dnaMoves;
+    const [a,b]=_dnaFlipped;
+    const pair=_dnaCards[a].base+_dnaCards[b].base;
+    const valid=['AT','TA','GC','CG'];
+    if(valid.includes(pair)){
+      _dnaCards[a].matched=_dnaCards[b].matched=true;
+      _dnaPairs++;document.getElementById('dnaPairs').textContent=_dnaPairs;
+      _dnaFlipped=[];_dnaLocked=false;
+      renderDnaBoard();
+      if(_dnaPairs===8) setTimeout(()=>alert('🧬 Perfect! Solved in '+_dnaMoves+' moves!'),300);
+    } else {
+      setTimeout(()=>{_dnaCards[a].flipped=_dnaCards[b].flipped=false;_dnaFlipped=[];_dnaLocked=false;renderDnaBoard();},800);
+    }
+  }
+}
+initDnaGame();
+
+// ─── Snake Game ───
+const SNK_W=22,SNK_H=17,SNK_SZ=12;
+const NUCLEOTIDES=['A','T','G','C'];
+function initSnakeGame(){
+  if(_snakeTimer) clearInterval(_snakeTimer);
+  _snake=[{x:11,y:8},{x:10,y:8},{x:9,y:8}];
+  _snakeDir={x:1,y:0};_snakeScore=0;
+  document.getElementById('snakeScore').textContent='0';
+  placeFood();
+  _snakeTimer=setInterval(snakeTick,120);
+  drawSnake();
+}
+function placeFood(){
+  do{_snakeFood={x:Math.floor(Math.random()*SNK_W),y:Math.floor(Math.random()*SNK_H),n:NUCLEOTIDES[Math.floor(Math.random()*4)]};}
+  while(_snake.some(s=>s.x===_snakeFood.x&&s.y===_snakeFood.y));
+}
+function snakeDir(dx,dy){
+  if(_snakeDir.x===-dx&&_snakeDir.y===-dy) return;
+  _snakeDir={x:dx,y:dy};
+}
+function snakeTick(){
+  const head={x:_snake[0].x+_snakeDir.x,y:_snake[0].y+_snakeDir.y};
+  if(head.x<0||head.x>=SNK_W||head.y<0||head.y>=SNK_H||_snake.some(s=>s.x===head.x&&s.y===head.y)){
+    clearInterval(_snakeTimer);_snakeTimer=null;
+    if(_snakeScore>_snakeBest){_snakeBest=_snakeScore;document.getElementById('snakeBest').textContent=_snakeBest;}
+    drawSnake(true);return;
+  }
+  _snake.unshift(head);
+  if(head.x===_snakeFood.x&&head.y===_snakeFood.y){_snakeScore++;document.getElementById('snakeScore').textContent=_snakeScore;placeFood();}
+  else _snake.pop();
+  drawSnake();
+}
+function drawSnake(dead){
+  const cv=document.getElementById('snakeCanvas'),ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.fillStyle=dead?'#fef2f2':'#f0fdf4';ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.strokeStyle='#e2e8f0';ctx.lineWidth=0.5;
+  for(let x=0;x<=SNK_W;x++){ctx.beginPath();ctx.moveTo(x*SNK_SZ,0);ctx.lineTo(x*SNK_SZ,SNK_H*SNK_SZ);ctx.stroke();}
+  for(let y=0;y<=SNK_H;y++){ctx.beginPath();ctx.moveTo(0,y*SNK_SZ);ctx.lineTo(SNK_W*SNK_SZ,y*SNK_SZ);ctx.stroke();}
+  const fc={'A':'#ef4444','T':'#3b82f6','G':'#22c55e','C':'#f59e0b'}[_snakeFood.n];
+  ctx.fillStyle=fc;ctx.beginPath();ctx.arc(_snakeFood.x*SNK_SZ+SNK_SZ/2,_snakeFood.y*SNK_SZ+SNK_SZ/2,SNK_SZ/2-1,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 8px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(_snakeFood.n,_snakeFood.x*SNK_SZ+SNK_SZ/2,_snakeFood.y*SNK_SZ+SNK_SZ/2);
+  _snake.forEach((s,i)=>{
+    ctx.fillStyle=i===0?(dead?'#dc2626':'#166534'):'#22c55e';
+    ctx.fillRect(s.x*SNK_SZ+1,s.y*SNK_SZ+1,SNK_SZ-2,SNK_SZ-2);
+    if(i===0){ctx.fillStyle='#fff';ctx.font='bold 7px sans-serif';ctx.fillText('🧬',s.x*SNK_SZ+SNK_SZ/2,s.y*SNK_SZ+SNK_SZ/2);}
+  });
+  if(dead){ctx.fillStyle='rgba(0,0,0,.5)';ctx.font='bold 16px sans-serif';ctx.fillText('Game Over!',cv.width/2,cv.height/2-8);
+    ctx.font='12px sans-serif';ctx.fillText('Score: '+_snakeScore,cv.width/2,cv.height/2+10);}
+}
+document.addEventListener('keydown',e=>{
+  if(!_snakeTimer) return;
+  const map={'ArrowUp':[0,-1],'ArrowDown':[0,1],'ArrowLeft':[-1,0],'ArrowRight':[1,0],'w':[0,-1],'s':[0,1],'a':[-1,0],'d':[1,0]};
+  if(map[e.key]){e.preventDefault();snakeDir(...map[e.key]);}
+});
+
+// ─── Gene Scramble ───
+const GENE_LIST=[
+  {name:'TP53',hint:'Guardian of the genome — tumor suppressor'},
+  {name:'BRCA1',hint:'Breast cancer susceptibility gene'},
+  {name:'EGFR',hint:'Epidermal growth factor receptor'},
+  {name:'KRAS',hint:'Kirsten rat sarcoma viral oncogene'},
+  {name:'BRAF',hint:'Rapidly accelerated fibrosarcoma'},
+  {name:'MYC',hint:'Master regulator transcription factor'},
+  {name:'PTEN',hint:'Phosphatase and tensin homolog'},
+  {name:'APC',hint:'Adenomatous polyposis coli'},
+  {name:'RB1',hint:'Retinoblastoma protein'},
+  {name:'VEGFA',hint:'Vascular endothelial growth factor A'},
+  {name:'CDH1',hint:'E-cadherin cell adhesion'},
+  {name:'PIK3CA',hint:'PI3-kinase catalytic subunit alpha'},
+  {name:'ALK',hint:'Anaplastic lymphoma kinase'},
+  {name:'IDH1',hint:'Isocitrate dehydrogenase 1'},
+  {name:'NRAS',hint:'Neuroblastoma RAS'},
+  {name:'HER2',hint:'Human epidermal growth factor receptor 2'},
+  {name:'JAK2',hint:'Janus kinase 2 — myeloproliferative'},
+  {name:'FLT3',hint:'Fms-like tyrosine kinase 3'},
+  {name:'NPM1',hint:'Nucleophosmin — AML marker'},
+  {name:'ERBB2',hint:'Receptor tyrosine-protein kinase'},
+  {name:'CDK4',hint:'Cyclin-dependent kinase 4'},
+  {name:'MDM2',hint:'Mouse double minute 2 — p53 regulator'},
+  {name:'SMAD4',hint:'Mothers against decapentaplegic homolog'},
+  {name:'VHL',hint:'Von Hippel-Lindau — renal cell carcinoma'},
+  {name:'KIT',hint:'Stem cell factor receptor'},
+];
+function scrambleStr(s){
+  const a=s.split('');
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a.join('')===s?scrambleStr(s):a.join('');
+}
+function newScramble(){
+  const g=GENE_LIST[Math.floor(Math.random()*GENE_LIST.length)];
+  _scrambleAnswer=g.name;
+  document.getElementById('scrambleWord').textContent=scrambleStr(g.name);
+  document.getElementById('scrambleHint').textContent='Hint: '+g.hint;
+  document.getElementById('scrambleInput').value='';
+  document.getElementById('scrambleResult').textContent='';
+  document.getElementById('scrambleInput').focus();
+}
+function checkScramble(){
+  const guess=document.getElementById('scrambleInput').value.trim().toUpperCase();
+  if(guess===_scrambleAnswer.toUpperCase()){
+    _scrambleStreak++;
+    document.getElementById('scrambleStreak').textContent=_scrambleStreak;
+    document.getElementById('scrambleResult').innerHTML='<span style="color:#22c55e;font-weight:700;">✅ Correct! It\'s '+_scrambleAnswer+'!</span>';
+    setTimeout(newScramble,1200);
+  } else {
+    _scrambleStreak=0;
+    document.getElementById('scrambleStreak').textContent='0';
+    document.getElementById('scrambleResult').innerHTML='<span style="color:#ef4444;">❌ Try again!</span>';
+  }
+}
+newScramble();
+
+// ─── Tetris ───
+const TET_COLS=10,TET_ROWS=20,TET_SZ=20;
+const TET_SHAPES=[
+  {shape:[[1,1,1,1]],color:'#06b6d4'},
+  {shape:[[1,1],[1,1]],color:'#eab308'},
+  {shape:[[0,1,0],[1,1,1]],color:'#a855f7'},
+  {shape:[[1,0,0],[1,1,1]],color:'#3b82f6'},
+  {shape:[[0,0,1],[1,1,1]],color:'#f97316'},
+  {shape:[[0,1,1],[1,1,0]],color:'#22c55e'},
+  {shape:[[1,1,0],[0,1,1]],color:'#ef4444'},
+];
+let _tetBoard,_tetPiece,_tetX,_tetY,_tetScore=0,_tetLinesCleared=0,_tetTimer=null,_tetOver=false;
+
+function initTetris(){
+  if(_tetTimer) clearInterval(_tetTimer);
+  _tetBoard=Array.from({length:TET_ROWS},()=>Array(TET_COLS).fill(null));
+  _tetScore=0;_tetLinesCleared=0;_tetOver=false;
+  document.getElementById('tetrisScore').textContent='0';
+  document.getElementById('tetrisLines').textContent='0';
+  spawnTetPiece();
+  _tetTimer=setInterval(tetTick,500);
+  drawTetris();
+}
+function spawnTetPiece(){
+  const t=TET_SHAPES[Math.floor(Math.random()*TET_SHAPES.length)];
+  _tetPiece={shape:t.shape.map(r=>[...r]),color:t.color};
+  _tetX=Math.floor((TET_COLS-_tetPiece.shape[0].length)/2);
+  _tetY=0;
+  if(!tetValid(_tetPiece.shape,_tetX,_tetY)){_tetOver=true;clearInterval(_tetTimer);_tetTimer=null;drawTetris();}
+}
+function tetValid(shape,px,py){
+  for(let r=0;r<shape.length;r++)for(let c=0;c<shape[r].length;c++){
+    if(!shape[r][c]) continue;
+    const nx=px+c,ny=py+r;
+    if(nx<0||nx>=TET_COLS||ny>=TET_ROWS) return false;
+    if(ny>=0&&_tetBoard[ny][nx]) return false;
+  }
+  return true;
+}
+function tetRotate(shape){
+  const rows=shape.length,cols=shape[0].length;
+  const rot=Array.from({length:cols},()=>Array(rows).fill(0));
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++) rot[c][rows-1-r]=shape[r][c];
+  return rot;
+}
+function tetLock(){
+  for(let r=0;r<_tetPiece.shape.length;r++)for(let c=0;c<_tetPiece.shape[r].length;c++){
+    if(!_tetPiece.shape[r][c]) continue;
+    const ny=_tetY+r;if(ny<0) continue;
+    _tetBoard[ny][_tetX+c]=_tetPiece.color;
+  }
+  let cleared=0;
+  for(let r=TET_ROWS-1;r>=0;r--){
+    if(_tetBoard[r].every(c=>c)){_tetBoard.splice(r,1);_tetBoard.unshift(Array(TET_COLS).fill(null));cleared++;r++;}
+  }
+  if(cleared){_tetLinesCleared+=cleared;_tetScore+=[0,100,300,500,800][cleared]||800;
+    document.getElementById('tetrisScore').textContent=_tetScore;
+    document.getElementById('tetrisLines').textContent=_tetLinesCleared;}
+  spawnTetPiece();
+}
+function tetTick(){
+  if(_tetOver) return;
+  if(tetValid(_tetPiece.shape,_tetX,_tetY+1)){_tetY++;}
+  else tetLock();
+  drawTetris();
+}
+function tetrisMove(dir){
+  if(_tetOver){if(dir==='rotate'||dir==='down') initTetris();return;}
+  if(dir==='left'&&tetValid(_tetPiece.shape,_tetX-1,_tetY)) _tetX--;
+  if(dir==='right'&&tetValid(_tetPiece.shape,_tetX+1,_tetY)) _tetX++;
+  if(dir==='down'&&tetValid(_tetPiece.shape,_tetX,_tetY+1)) _tetY++;
+  if(dir==='rotate'){const rot=tetRotate(_tetPiece.shape);if(tetValid(rot,_tetX,_tetY)) _tetPiece.shape=rot;}
+  if(dir==='drop'){while(tetValid(_tetPiece.shape,_tetX,_tetY+1))_tetY++;tetLock();}
+  drawTetris();
+}
+function drawTetris(){
+  const cv=document.getElementById('tetrisCanvas'),ctx=cv.getContext('2d');
+  ctx.fillStyle='#0f172a';ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.strokeStyle='#1e293b';ctx.lineWidth=0.5;
+  for(let x=0;x<=TET_COLS;x++){ctx.beginPath();ctx.moveTo(x*TET_SZ,0);ctx.lineTo(x*TET_SZ,TET_ROWS*TET_SZ);ctx.stroke();}
+  for(let y=0;y<=TET_ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*TET_SZ);ctx.lineTo(TET_COLS*TET_SZ,y*TET_SZ);ctx.stroke();}
+  for(let r=0;r<TET_ROWS;r++)for(let c=0;c<TET_COLS;c++){
+    if(_tetBoard[r][c]){ctx.fillStyle=_tetBoard[r][c];ctx.fillRect(c*TET_SZ+1,r*TET_SZ+1,TET_SZ-2,TET_SZ-2);
+      ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(c*TET_SZ+1,r*TET_SZ+1,TET_SZ-2,3);}
+  }
+  if(!_tetOver){
+    let gy=_tetY;while(tetValid(_tetPiece.shape,_tetX,gy+1))gy++;
+    if(gy!==_tetY){for(let r=0;r<_tetPiece.shape.length;r++)for(let c=0;c<_tetPiece.shape[r].length;c++){
+      if(!_tetPiece.shape[r][c]) continue;
+      ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect((_tetX+c)*TET_SZ+1,(gy+r)*TET_SZ+1,TET_SZ-2,TET_SZ-2);
+    }}
+  }
+  if(!_tetOver){for(let r=0;r<_tetPiece.shape.length;r++)for(let c=0;c<_tetPiece.shape[r].length;c++){
+    if(!_tetPiece.shape[r][c]) continue;
+    const px=(_tetX+c)*TET_SZ,py=(_tetY+r)*TET_SZ;
+    ctx.fillStyle=_tetPiece.color;ctx.fillRect(px+1,py+1,TET_SZ-2,TET_SZ-2);
+    ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fillRect(px+1,py+1,TET_SZ-2,3);
+  }}
+  if(_tetOver){ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,cv.height/2-30,cv.width,60);
+    ctx.fillStyle='#fff';ctx.font='bold 18px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('GAME OVER',cv.width/2,cv.height/2-6);
+    ctx.font='13px sans-serif';ctx.fillText('Score: '+_tetScore+' | Lines: '+_tetLinesCleared,cv.width/2,cv.height/2+14);}
+}
+document.addEventListener('keydown',e=>{
+  if(!_tetTimer&&!_tetOver) return;
+  const el=document.getElementById('game-tetris');
+  if(!el||el.style.display==='none') return;
+  const map={'ArrowLeft':'left','ArrowRight':'right','ArrowDown':'down','ArrowUp':'rotate',' ':'drop'};
+  if(map[e.key]){e.preventDefault();tetrisMove(map[e.key]);}
+});
 
 function loadSaved() {
   try {
