@@ -37,7 +37,7 @@ input,textarea,select{font-family:inherit;}
 header{display:flex;align-items:center;justify-content:space-between;padding:0 18px 0 0;height:52px;background:var(--surf);border-bottom:1px solid var(--border);box-shadow:var(--sh);flex-shrink:0;z-index:20;gap:12px;}
 /* Wordmark area spans exactly the sidebar column width (320px) so it
    visually aligns with the sidebar below, with a matching right border. */
-.logo-area{display:flex;align-items:center;gap:14px;flex-shrink:0;width:310px;padding:0 18px;box-sizing:border-box;border-right:1px solid var(--border);height:100%;}
+.logo-area{display:flex;align-items:center;gap:14px;flex-shrink:0;width:300px;padding:0 18px;box-sizing:border-box;border-right:1px solid var(--border);height:100%;}
 .brand-icon{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--g500),var(--g700));display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 2px 8px rgba(46,107,53,.3);flex-shrink:0;}
 .brand-text{display:flex;flex-direction:column;line-height:1.1;min-width:0;}
 .brand-name{font-weight:900;font-size:24px;color:var(--g700);letter-spacing:-.5px;font-family:var(--mono);}
@@ -58,7 +58,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 1
 .status-dot{width:8px;height:8px;border-radius:50%;background:var(--g500);box-shadow:0 0 0 2px var(--g300);animation:pulse 2s infinite;}
 
 /* LAYOUT */
-.workspace{flex:1;display:grid;grid-template-columns:310px 1fr 300px;overflow:hidden;}
+.workspace{flex:1;display:grid;grid-template-columns:300px 1fr 300px;overflow:hidden;}
 /* ── Tablet: hide sidebars but keep desktop header ── */
 @media(max-width:1100px){.workspace{grid-template-columns:1fr;}.sidebar,.right-panel{display:none!important;}}
 /* ── Mobile bottom nav ── */
