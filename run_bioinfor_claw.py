@@ -1126,6 +1126,35 @@ import threading as _threading
 # ── Rate limiter for free-trial proxy ──────────────────────────────────────
 _DAILY_LIMIT = 24
 _rate_counts = _defaultdict(lambda: {'date': '', 'count': 0})
+_RATE_FILE = Path(__file__).parent / '.rate_limits.json'
+
+def _load_rate_counts():
+    """Load persisted rate counts from disk (survives server restarts)."""
+    global _rate_counts
+    try:
+        if _RATE_FILE.exists():
+            data = _json.loads(_RATE_FILE.read_text(encoding='utf-8'))
+            today = datetime.now().strftime('%Y-%m-%d')
+            for ip, rec in data.items():
+                if rec.get('date') == today:
+                    _rate_counts[ip] = rec
+            print(f"  [rate-limit] Loaded {len(_rate_counts)} entries from disk")
+    except Exception as e:
+        print(f"  [rate-limit] Could not load saved counts: {e}")
+
+def _save_rate_counts():
+    """Persist current rate counts to disk."""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        # Only save today's entries
+        data = {ip: rec for ip, rec in _rate_counts.items()
+                if rec.get('date') == today}
+        _RATE_FILE.write_text(_json.dumps(data), encoding='utf-8')
+    except Exception:
+        pass
+
+# Load on startup
+_load_rate_counts()
 
 def _check_rate_limit(ip):
     """Return (allowed: bool, remaining: int) for the given IP today."""
@@ -1137,7 +1166,22 @@ def _check_rate_limit(ip):
     if rec['count'] >= _DAILY_LIMIT:
         return False, 0
     rec['count'] += 1
+    _save_rate_counts()
     return True, _DAILY_LIMIT - rec['count']
+
+def _get_client_ip(handler):
+    """Extract real client IP from proxy headers (Render, Cloudflare, nginx)."""
+    # X-Forwarded-For: client, proxy1, proxy2 — take the first
+    xff = handler.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    # Fallback headers
+    for h in ('X-Real-IP', 'CF-Connecting-IP'):
+        val = handler.headers.get(h, '')
+        if val:
+            return val.strip()
+    # Last resort: direct connection IP
+    return handler.client_address[0]
 
 # ── Analytics tracker ──────────────────────────────────────────────────────
 _analytics_lock = _threading.Lock()
@@ -1313,7 +1357,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
 
         if path in ('/', '/index.html'):
-            _track_visit(self.client_address[0])
+            _track_visit(_get_client_ip(self))
             self._send_html(self.html_content)
 
         elif path in ('/api/health', '/api/health/'):
@@ -1351,7 +1395,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({'skills': skills})
 
         elif path == '/api/chat/quota':
-            client_ip = self.client_address[0]
+            client_ip = _get_client_ip(self)
             today = datetime.now().strftime('%Y-%m-%d')
             rec = _rate_counts[client_ip]
             used = rec['count'] if rec['date'] == today else 0
@@ -1450,7 +1494,7 @@ class Handler(BaseHTTPRequestHandler):
                         if 1 < len(g) < 20 and g.isalpha():
                             gene = g
                             break
-                _track_analysis(self.client_address[0], skill_key, gene)
+                _track_analysis(_get_client_ip(self), skill_key, gene)
                 self._send_json(result)
             except Exception as e:
                 self._send_json({'error': str(e), 'success': False}, 500)
@@ -1472,7 +1516,7 @@ class Handler(BaseHTTPRequestHandler):
                             g = a.upper().strip()
                             if 1 < len(g) < 20 and g.isalpha():
                                 gene = g; break
-                    _track_analysis(self.client_address[0], skill_id, gene)
+                    _track_analysis(_get_client_ip(self), skill_id, gene)
                 self._send_json(result)
             except Exception as e:
                 import traceback
@@ -1508,7 +1552,7 @@ class Handler(BaseHTTPRequestHandler):
             if not minimax_key:
                 self._send_json({'error': 'Free trial not configured on this server'}, 503)
                 return
-            client_ip = self.client_address[0]
+            client_ip = _get_client_ip(self)
             allowed, remaining = _check_rate_limit(client_ip)
             if not allowed:
                 self._send_json({
