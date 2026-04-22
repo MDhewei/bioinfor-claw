@@ -1116,7 +1116,7 @@ function clearSession() {{
     return html
 
 # ── Web + Execution server ──────────────────────────────────────────────────
-import json as _json, subprocess as _subprocess, shutil as _shutil
+import json as _json, subprocess as _subprocess, shutil as _shutil, atexit as _atexit
 from urllib.parse import urlparse, parse_qs
 
 import requests as _requests
@@ -1157,35 +1157,62 @@ _analytics = {
 _unique_ip_set = set()  # fast lookup mirror of unique_ips list
 _ANALYTICS_FILE = None  # set in main()
 
+# Cloud analytics sync — survives Render redeployments
+# Set ANALYTICS_URL env var to a jsonbin/npoint endpoint, e.g.:
+#   https://api.npoint.io/YOUR_ID
+_ANALYTICS_URL = os.environ.get('ANALYTICS_URL', '')
+
 def _save_analytics():
-    """Persist analytics to disk (non-blocking)."""
+    """Persist analytics to disk + cloud (non-blocking)."""
     if not _ANALYTICS_FILE:
         return
     try:
         with _analytics_lock:
             data = {k: v for k, v in _analytics.items()
                     if k not in ('visitors_today', 'analyses_today')}
-            # Convert daily counts before saving
             data['_saved'] = datetime.now().isoformat()
         _ANALYTICS_FILE.write_text(_json.dumps(data, indent=2), encoding='utf-8')
     except Exception as e:
-        print(f"  [analytics] save error: {e}")
+        print(f"  [analytics] save-disk error: {e}")
+    # Sync to cloud
+    if _ANALYTICS_URL:
+        try:
+            _requests.post(_ANALYTICS_URL, json=data, timeout=5)
+        except Exception as e:
+            print(f"  [analytics] save-cloud error: {e}")
 
 def _load_analytics():
-    """Load persisted analytics on startup."""
-    if _ANALYTICS_FILE and _ANALYTICS_FILE.exists():
+    """Load persisted analytics — prefer cloud, fall back to disk."""
+    loaded = False
+    # Try cloud first (survives redeployments)
+    if _ANALYTICS_URL:
+        try:
+            r = _requests.get(_ANALYTICS_URL, timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                if data and data.get('total_analyses', 0) > 0:
+                    _apply_analytics(data)
+                    print(f"  ☁️  Loaded analytics from cloud: {_analytics['total_analyses']} analyses, {len(_unique_ip_set)} unique users")
+                    loaded = True
+        except Exception as e:
+            print(f"  [analytics] cloud-load error: {e}")
+    # Fall back to local file
+    if not loaded and _ANALYTICS_FILE and _ANALYTICS_FILE.exists():
         try:
             data = _json.loads(_ANALYTICS_FILE.read_text(encoding='utf-8'))
-            for k in ('total_analyses', 'total_visits', 'unique_ips', 'genes_searched',
-                      'skills_used', 'recent_analyses', 'daily_history',
-                      'user_locations', 'start_time'):
-                if k in data:
-                    _analytics[k] = data[k]
-            # Rebuild the fast-lookup set from persisted list
-            _unique_ip_set.update(_analytics.get('unique_ips', []))
-            print(f"  📊  Loaded analytics: {_analytics['total_analyses']} analyses, {len(_unique_ip_set)} unique users")
+            _apply_analytics(data)
+            print(f"  📊  Loaded analytics from disk: {_analytics['total_analyses']} analyses, {len(_unique_ip_set)} unique users")
         except Exception as e:
-            print(f"  [analytics] load error: {e}")
+            print(f"  [analytics] disk-load error: {e}")
+
+def _apply_analytics(data):
+    """Apply loaded analytics data (from cloud or disk)."""
+    for k in ('total_analyses', 'total_visits', 'unique_ips', 'genes_searched',
+              'skills_used', 'recent_analyses', 'daily_history',
+              'user_locations', 'start_time'):
+        if k in data:
+            _analytics[k] = data[k]
+    _unique_ip_set.update(_analytics.get('unique_ips', []))
 
 def _geolocate_ip(ip):
     """Look up approximate lat/lng for an IP (non-blocking, best-effort)."""
@@ -1221,6 +1248,9 @@ def _track_visit(ip):
         if today not in _analytics['daily_history']:
             _analytics['daily_history'][today] = {'visits': 0, 'analyses': 0}
         _analytics['daily_history'][today]['visits'] += 1
+    # Save periodically (every 3 visits)
+    if _analytics['total_visits'] % 3 == 0:
+        _threading.Thread(target=_save_analytics, daemon=True).start()
     # Geolocate in background thread (don't block the response)
     if ip not in _geo_cache:
         def _do_geo():
@@ -4119,10 +4149,16 @@ def main():
     port = args.port
     results_dir = repo / "web_results"
     results_dir.mkdir(exist_ok=True)
-    # Initialize analytics persistence
+    # Initialize analytics persistence — save in repo root so it survives
+    # even if web_results/ is on an ephemeral filesystem (e.g. Render)
     global _ANALYTICS_FILE
-    _ANALYTICS_FILE = results_dir / '_analytics.json'
+    _ANALYTICS_FILE = repo / '_analytics.json'
+    # Also try loading from old location (web_results/) for migration
+    old_file = results_dir / '_analytics.json'
+    if not _ANALYTICS_FILE.exists() and old_file.exists():
+        import shutil; shutil.copy2(old_file, _ANALYTICS_FILE)
     _load_analytics()
+    _atexit.register(_save_analytics)  # guarantee save on any exit
     Handler.repo_root   = repo
     Handler.results_dir = results_dir
     # Allow quick restart without "Address already in use" errors
