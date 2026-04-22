@@ -32,6 +32,18 @@ python scripts/protein_variant_mapper.py \
   --fetch-uniprot-variants \
   --outdir results/
 
+# ★ Map TCGA mutations from mutation-analysis-for-gene onto 3D structure
+# Step 1: Run mutation analysis to get hotspot_details.tsv
+cd ../../gene-centered-analysis/mutation-analysis-for-gene
+python scripts/mutation_analysis_for_gene.py --gene <GENE> --outdir results/<gene>
+# Step 2: Feed hotspots into variant mapper
+cd ../../protein-structure-analysis/protein-variant-mapper
+python scripts/protein_variant_mapper.py \
+  --uniprot <ACC> \
+  --hotspot-file ../../gene-centered-analysis/mutation-analysis-for-gene/results/<gene>/hotspot_details.tsv \
+  --top-hotspots 20 \
+  --outdir results/
+
 # Load variants from file + include pocket proximity
 python scripts/protein_variant_mapper.py \
   --pdb-id <PDB_ID> \
@@ -56,6 +68,7 @@ python scripts/protein_variant_mapper.py \
 | Local PDB file | `--pdb-file path/to/protein.pdb` |
 | Variants as text (few variants) | `--variants "A123V,G45S,R280*"` |
 | Variants from a file | `--variants-file variants.txt` |
+| **"map TCGA mutations onto structure"** / no specific variants given | **Run mutation-analysis-for-gene first**, then use `--hotspot-file` with the resulting `hotspot_details.tsv`. Add `--top-hotspots 20` to limit to top recurrent mutations |
 | Variants with known clinical significance | add `--fetch-uniprot-variants` to auto-classify; also supply `--uniprot-acc` if using `--pdb-id` |
 | "are these variants near the binding pocket?" | add `--pocket-residues results/<PREFIX>.pocket_residues.tsv` (run pocket module first) |
 | Multi-chain protein, variants on one chain | `--chain A` |
@@ -79,7 +92,8 @@ Alternatively, provide a file (--variants-file):
 | Argument | Required | Default | Description |
 |---|---|---|---|
 | `--pdb-id` / `--uniprot` / `--pdb-file` | Yes (one of) | — | Structure source |
-| `--variants` / `--variants-file` | Yes (one of) | — | Variant input |
+| `--variants` / `--variants-file` / `--hotspot-file` | Yes (one of) | — | Variant input |
+| `--top-hotspots` | No | `0` (all) | When using --hotspot-file, keep only top N hotspots by mutation count |
 | `--chain` | No | all | Restrict to a specific chain |
 | `--fetch-uniprot-variants` | No | off | Pull UniProt natural variants and auto-classify |
 | `--uniprot-acc` | No | — | UniProt accession for variant fetching (if using `--pdb-id`) |
@@ -89,9 +103,9 @@ Alternatively, provide a file (--variants-file):
 | `--prefix` | No | auto | File prefix |
 
 ## Outputs
-- `<PREFIX>.variant_summary.tsv` — all variants with chain, resname, SASA, solvent exposure, secondary structure, B-factor, pocket proximity
-- `<PREFIX>.variant_linear_map.png/.pdf` — lollipop plot: variant positions along the backbone, coloured by impact class
-- `<PREFIX>.variant_map.html` — interactive 3D viewer: coloured spheres at Cα, stick side-chains, floating labels; full protein shown as gray transparent cartoon
+- `<PREFIX>.variant_summary.tsv` — all variants with chain, resname, SASA, solvent exposure, secondary structure, B-factor, pocket proximity (+ TCGA mutation count when using --hotspot-file)
+- `<PREFIX>.variant_linear_map.png/.pdf` — lollipop plot: variant positions along the backbone, coloured by impact class. When using TCGA data, marker sizes scale by mutation count.
+- `<PREFIX>.variant_map.html` — interactive 3D viewer: coloured spheres at Cα, stick side-chains, floating labels with mutation count (e.g. "V600E (n=247)"); full protein shown as gray transparent cartoon
 
 ## Colour scheme
 | Class | Colour |
@@ -105,6 +119,13 @@ Alternatively, provide a file (--variants-file):
 | stop | Black |
 
 ## Chaining with other skills
+
+**TCGA mutations → 3D structure (recommended when user doesn't provide specific variants):**
+1. Run `mutation-analysis-for-gene` with `--gene <GENE>` to get `hotspot_details.tsv`
+2. Pass the hotspot file to this script via `--hotspot-file`. Marker sizes and labels will automatically reflect TCGA mutation counts.
+3. Use `--top-hotspots 20` to focus on the most recurrent mutations.
+
+**Pocket proximity:**
 Run `protein-structure-visualizer --modules pocket` first to generate `*.pocket_residues.tsv`, then pass it via `--pocket-residues` to annotate which variants are near binding pockets.
 
 ## Failure conditions

@@ -1892,6 +1892,23 @@ class Handler(BaseHTTPRequestHandler):
                                 llm_provided_valid = True
                             break
                 if not llm_provided_valid:
+                    # Strip invalid LLM-provided path immediately so it doesn't
+                    # break the command (e.g. truncated filenames from token limits)
+                    if flag in provided_flags:
+                        new_args = []
+                        skip = False
+                        for a in cli_args:
+                            if skip:
+                                skip = False
+                                continue
+                            if a == f'--{flag}':
+                                skip = True
+                                continue
+                            new_args.append(a)
+                        cli_args = new_args
+                        provided_flags.discard(flag)
+                        print(f"  [tool/run_script] Stripped invalid --{flag} from LLM args")
+
                     # Search in cache and also in recent web_results subdirs
                     cached = self._find_cached_files(pattern, cache_dir)
                     if not cached:
@@ -1907,21 +1924,21 @@ class Handler(BaseHTTPRequestHandler):
                                             break
                                 if cached:
                                     break
+                    if not cached:
+                        # Last resort: search common data directories on Render
+                        import fnmatch as _fnm
+                        for data_dir in [Path('/opt/render/project/src/data/depmap'),
+                                         Path('/opt/render/project/src/data'),
+                                         self.repo_root / 'data' / 'depmap',
+                                         self.repo_root / 'data']:
+                            if data_dir.exists():
+                                for f in data_dir.iterdir():
+                                    if _fnm.fnmatch(f.name, pattern):
+                                        cached = [f]
+                                        break
+                            if cached:
+                                break
                     if cached:
-                        # Remove invalid LLM-provided path from cli_args
-                        if flag in provided_flags:
-                            new_args = []
-                            skip = False
-                            for a in cli_args:
-                                if skip:
-                                    skip = False
-                                    continue
-                                if a == f'--{flag}':
-                                    skip = True
-                                    continue
-                                new_args.append(a)
-                            cli_args = new_args
-                            provided_flags.discard(flag)
                         auto_args += [f'--{flag}', str(cached[0])]
                         print(f"  [tool/run_script] Auto-wired --{flag} → {cached[0].name}")
 

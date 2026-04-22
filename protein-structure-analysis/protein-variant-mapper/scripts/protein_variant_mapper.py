@@ -153,6 +153,65 @@ def load_variants_file(path: str) -> List[Dict]:
     return parse_variants(",".join(lines))
 
 
+def load_hotspot_file(path: str, top_n: int = 0) -> List[Dict]:
+    """
+    Load variants from a TCGA hotspot_details.tsv produced by
+    mutation-analysis-for-gene.  Columns: position, count, aa_changes, types.
+
+    `aa_changes` contains semicolon-separated strings like "V600E;V600K".
+    Each unique amino-acid change becomes a separate variant entry.
+
+    Parameters
+    ----------
+    path : str   — path to hotspot_details.tsv
+    top_n : int  — if >0, keep only the top N hotspot positions by count
+
+    Returns
+    -------
+    list of variant dicts compatible with annotate_variants().
+    """
+    df = pd.read_csv(path, sep="\t")
+    if "position" not in df.columns or "aa_changes" not in df.columns:
+        raise ValueError(
+            f"Hotspot file '{path}' must have 'position' and 'aa_changes' columns. "
+            f"Got: {list(df.columns)}"
+        )
+
+    df = df.sort_values("count", ascending=False)
+    if top_n > 0:
+        df = df.head(top_n)
+
+    variants: List[Dict] = []
+    seen = set()
+    for _, row in df.iterrows():
+        aa_str = str(row.get("aa_changes", ""))
+        types_str = str(row.get("types", "")).lower()
+
+        # Classify based on mutation types from TCGA
+        if any(t in types_str for t in ("nonsense", "stop", "frameshift")):
+            default_impact = "pathogenic"
+        elif "missense" in types_str:
+            default_impact = "uncertain"
+        else:
+            default_impact = "custom"
+
+        for token in aa_str.split(";"):
+            token = token.strip()
+            if not token or token in seen:
+                continue
+            parsed = parse_variants(token)
+            if parsed:
+                v = parsed[0]
+                v["impact_class"] = default_impact
+                v["tcga_count"] = int(row["count"])
+                variants.append(v)
+                seen.add(token)
+
+    print(f"[INFO] Loaded {len(variants)} unique variants from "
+          f"{len(df)} TCGA hotspot positions.")
+    return variants
+
+
 # =========================================================
 # Structure fetching and parsing
 # =========================================================
@@ -406,7 +465,7 @@ def annotate_variants(
         structure_aa = resname_1
         wt_match = (structure_aa == v["wt_aa"]) if v["wt_aa"] != "?" else None
 
-        rows.append({
+        row_dict = {
             "variant":              v["raw"],
             "wt_aa":                v["wt_aa"],
             "pos":                  pos,
@@ -422,7 +481,11 @@ def annotate_variants(
             "b_factor":             round(bfactor, 2),
             "nearest_pocket_dist_A": round(pocket_dist, 2) if not np.isinf(pocket_dist) else np.nan,
             "near_pocket_lt8A":     near_pocket,
-        })
+        }
+        # Carry through TCGA mutation count if present
+        if "tcga_count" in v:
+            row_dict["tcga_count"] = v["tcga_count"]
+        rows.append(row_dict)
 
     return pd.DataFrame(rows)
 
@@ -446,15 +509,31 @@ def plot_linear_variant_map(
     # Backbone
     ax.axhline(0, color="#CCCCCC", lw=6, solid_capstyle="round", zorder=1)
 
-    # Lollipops
+    # Lollipops — scale marker size by TCGA count if available
+    has_counts = "tcga_count" in variant_df.columns
+    max_count = variant_df["tcga_count"].max() if has_counts else 1
+
     for _, row in variant_df.iterrows():
         color = IMPACT_COLORS.get(row["impact_class"], "#888888")
         pos_x = row["pos"]
-        ax.plot([pos_x, pos_x], [0, 1], color=color, lw=1.2, zorder=2)
-        ax.scatter(pos_x, 1, color=color, s=60, zorder=3, edgecolors="white", linewidths=0.5)
+        count = int(row.get("tcga_count", 0)) if has_counts else 0
+        # Scale marker: min 40, max 300 proportional to mutation count
+        marker_size = 60
+        if has_counts and max_count > 0:
+            marker_size = max(40, min(300, 40 + 260 * (count / max_count)))
+
+        lollipop_height = 1.0
+        ax.plot([pos_x, pos_x], [0, lollipop_height], color=color, lw=1.2, zorder=2)
+        ax.scatter(pos_x, lollipop_height, color=color, s=marker_size, zorder=3,
+                   edgecolors="white", linewidths=0.5)
+
+        # Label: include count if from TCGA
+        lbl = row["variant"]
+        if count > 0:
+            lbl += f" ({count})"
         ax.text(
-            pos_x, 1.12,
-            row["variant"],
+            pos_x, lollipop_height + 0.12,
+            lbl,
             ha="center", va="bottom",
             fontsize=7.5,
             color=color,
@@ -544,8 +623,12 @@ def render_variant_viewer(
         coord_key = (row["chain"], int(row["pos"]))
         if coord_key in ca_coords:
             x, y, z = ca_coords[coord_key]
+            # Include TCGA mutation count in label if available
+            lbl_text = row["variant"]
+            if "tcga_count" in row and pd.notna(row.get("tcga_count")):
+                lbl_text += f" (n={int(row['tcga_count'])})"
             view.addLabel(
-                row["variant"],
+                lbl_text,
                 {
                     "position":         {"x": x, "y": y + 1.5, "z": z},
                     "font":             "Arial",
@@ -614,6 +697,11 @@ Examples:
   python protein_variant_mapper.py --pdb-id 2HHB --variants-file variants.tsv \\
       --chain A --outdir results/
 
+  # Map TCGA mutations from mutation-analysis-for-gene hotspot file
+  python protein_variant_mapper.py --uniprot P04637 \\
+      --hotspot-file ../../gene-centered-analysis/mutation-analysis-for-gene/results/tp53/hotspot_details.tsv \\
+      --top-hotspots 20 --outdir results/
+
   # Include pocket proximity if you already ran the visualizer pocket module
   python protein_variant_mapper.py --pdb-id 1TIM --variants "A23V,G45S" \\
       --pocket-residues results/1TIM.pocket_residues.tsv --outdir results/
@@ -630,8 +718,10 @@ Examples:
     var = p.add_mutually_exclusive_group(required=True)
     var.add_argument("--variants",      metavar="STR",  help='Comma-separated variants, e.g. "A123V,G45S"')
     var.add_argument("--variants-file", metavar="PATH", help="File with one variant per line, or TSV with variant/impact_class columns")
+    var.add_argument("--hotspot-file",  metavar="PATH", help="hotspot_details.tsv from mutation-analysis-for-gene (TCGA mutations)")
 
     p.add_argument("--chain",                 metavar="C",    default=None, help="Restrict to this chain (default: all)")
+    p.add_argument("--top-hotspots",          metavar="N",    type=int, default=0, help="When using --hotspot-file, keep only top N hotspots by count (default: all)")
     p.add_argument("--fetch-uniprot-variants",action="store_true",          help="Also fetch UniProt natural variants and annotate with disease association")
     p.add_argument("--uniprot-acc",           metavar="ACC",  default=None, help="UniProt accession for variant fetching (if different from --uniprot)")
     p.add_argument("--pocket-residues",       metavar="PATH", default=None, help="Pocket residues TSV from protein-structure-visualizer pocket module")
@@ -667,6 +757,8 @@ def main() -> None:
     # ── Variants ──────────────────────────────────────────────────────────
     if args.variants:
         variants = parse_variants(args.variants)
+    elif args.hotspot_file:
+        variants = load_hotspot_file(args.hotspot_file, top_n=args.top_hotspots)
     else:
         variants = load_variants_file(args.variants_file)
 
