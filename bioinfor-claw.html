@@ -1879,9 +1879,9 @@ Format: <!--EXEC_ARGS:{"script":"scripts/the_script.py","args":["--gene","TP53",
 - This block is machine-parsed and never shown to the user.
 - If no args needed or no skill routed, omit this block entirely.
 
-Example visible + hidden response:
-"Analyzing TP53 expression across DepMap cell lines. This will show which cancer lineages have the highest TP53 mRNA levels and identify any notable patterns in expression variation."
-<!--EXEC_ARGS:{"script":"scripts/depmap_analysis_for_gene.py","args":["--gene","TP53","--modules","expression"]}-->
+Example visible + hidden response (note: use the gene the USER specified, never default to TP53 or any example gene):
+"Analyzing KRAS expression across DepMap cell lines. This will show which cancer lineages have the highest KRAS mRNA levels and identify any notable patterns in expression variation."
+<!--EXEC_ARGS:{"script":"scripts/depmap_analysis_for_gene.py","args":["--gene","KRAS","--modules","expression"]}-->
 
 Example bad response: (anything with \`\`\`bash, "python scripts/", "--gene", "--outdir", "Command to run:", file listings in the visible text)
 
@@ -2917,6 +2917,13 @@ function buildAgentSystemPrompt(stepBudget){
     '- WRONG: user asks "what is the latest DepMap release?" → agent answers the question AND runs depmap_analysis_for_gene for TP53. The user never asked for TP53 analysis.',
     '- RIGHT: user asks "what is the latest DepMap release?" → agent calls list_skills/read_skill to find the info, answers the question, and stops.',
     '- When answering informational questions, you MAY use list_skills and read_skill to gather info, but do NOT call run_script unless the user explicitly requested an analysis to be executed.',
+    '',
+    'CRITICAL — NEVER INVENT DEFAULT GENES OR PARAMETERS:',
+    '- SKILL.md files contain example commands with genes like TP53, KRAS, EGFR, BRCA1. These are EXAMPLES ONLY — do NOT use them as defaults.',
+    '- If the user does not specify a gene, cancer type, or other required parameter, ASK the user instead of picking one yourself.',
+    '- WRONG: user says "run survival analysis" → agent picks TP53 because it saw it in the SKILL.md examples.',
+    '- RIGHT: user says "run survival analysis" → agent asks "Which gene would you like to analyze? And which TCGA cancer type?"',
+    '- Never mention example genes (TP53, KRAS, etc.) in your text responses unless the USER mentioned them first or they appear in actual analysis results.',
     '',
     'GENERAL FLOW (for analysis requests only):',
     '1. If the user asks for an analysis, call list_skills to see what is available.',
