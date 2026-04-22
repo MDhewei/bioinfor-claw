@@ -1987,14 +1987,18 @@ class Handler(BaseHTTPRequestHandler):
 
         duration = _time.time() - run_start
 
-        # Rescue new output files from skill_dir → out_dir
+        # Rescue new output files from skill_dir (and subdirs) → out_dir
         OUTPUT_EXTS = {'.png', '.svg', '.pdf', '.jpg', '.jpeg', '.tsv',
                        '.csv', '.xlsx', '.xls', '.json', '.html',
                        '.txt', '.fasta', '.fa', '.bed', '.gff', '.gtf',
                        '.bam', '.vcf', '.log'}
         try:
-            for f in skill_dir.iterdir():
+            for f in skill_dir.rglob('*'):
                 if not f.is_file():
+                    continue
+                # Skip files inside .git, __pycache__, scripts/, etc.
+                rel_parts = f.relative_to(skill_dir).parts
+                if any(p.startswith('.') or p == '__pycache__' or p == 'scripts' or p == 'cache' for p in rel_parts[:-1]):
                     continue
                 try:
                     mtime = f.stat().st_mtime
