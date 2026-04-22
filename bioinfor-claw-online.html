@@ -37,10 +37,10 @@ input,textarea,select{font-family:inherit;}
 header{display:flex;align-items:center;justify-content:space-between;padding:0 18px 0 0;height:52px;background:var(--surf);border-bottom:1px solid var(--border);box-shadow:var(--sh);flex-shrink:0;z-index:20;gap:12px;}
 /* Wordmark area spans exactly the sidebar column width (320px) so it
    visually aligns with the sidebar below, with a matching right border. */
-.logo-area{display:flex;align-items:center;gap:12px;flex-shrink:0;width:280px;padding:0 18px;box-sizing:border-box;border-right:1px solid var(--border);height:100%;}
-.brand-icon{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--g500),var(--g700));display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 2px 8px rgba(46,107,53,.3);flex-shrink:0;}
+.logo-area{display:flex;align-items:center;gap:14px;flex-shrink:0;width:280px;padding:0 18px;box-sizing:border-box;border-right:1px solid var(--border);height:100%;}
+.brand-icon{width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,var(--g500),var(--g700));display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:0 3px 10px rgba(46,107,53,.35);flex-shrink:0;}
 .brand-text{display:flex;flex-direction:column;line-height:1.1;min-width:0;}
-.brand-name{font-weight:800;font-size:20px;color:var(--g700);letter-spacing:-.4px;font-family:var(--mono);}
+.brand-name{font-weight:900;font-size:24px;color:var(--g700);letter-spacing:-.5px;font-family:var(--mono);}
 .brand-tag{display:none;}
 .logo-fb{font-family:var(--mono);font-weight:500;font-size:15px;color:var(--g700);display:none;}
 .llm-selector-wrap{display:flex;align-items:center;gap:8px;flex:1;justify-content:center;}
@@ -485,10 +485,7 @@ select.field-input{cursor:pointer;}
        learn how to ask the agent. -->
   <aside class="sidebar">
     <div class="mode-toggle-bar">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <span style="font-weight:700;color:var(--accent);font-size:16px;">🧬 bioinfor-claw</span>
-      </div>
-      <div style="font-size:13.5px;color:var(--text);line-height:1.6;font-weight:400;">
+      <div style="font-size:13.5px;color:var(--text);line-height:1.6;font-weight:400;text-align:justify;">
         Your AI-powered bioinformatics copilot. Describe any analysis in plain language — bioinfor-claw selects the right tool and runs it for you. Explore skills below with example prompts.
       </div>
       <div style="margin-top:6px;font-size:12.5px;color:var(--text-dim);line-height:1.5;">
