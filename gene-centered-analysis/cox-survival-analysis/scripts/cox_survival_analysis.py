@@ -698,6 +698,18 @@ class CoxSurvivalAnalysis:
         # Outputs
         self.save_outputs()
 
+        # Print key results to stdout for agent consumption
+        if hasattr(self, 'univariate_results') and len(self.univariate_results) > 0:
+            print(f"\n[RESULTS] Cox Univariate Analysis (n = {len(self.time)})")
+            for _, row in self.univariate_results.iterrows():
+                sig = "SIGNIFICANT" if row['pvalue'] < self.args.alpha else "NOT significant"
+                print(f"[RESULTS]   {row['covariate']}: HR = {row['HR']:.3f} (95% CI: {row['CI_lower']:.3f}-{row['CI_upper']:.3f}), p = {row['pvalue']:.2e} ({sig})")
+        if hasattr(self, 'multivariate_results') and len(self.multivariate_results) > 0:
+            print(f"\n[RESULTS] Cox Multivariate Analysis (n = {len(self.time)})")
+            for _, row in self.multivariate_results.iterrows():
+                sig = "SIGNIFICANT" if row['pvalue'] < self.args.alpha else "NOT significant"
+                print(f"[RESULTS]   {row['covariate']}: HR = {row['HR']:.3f} (95% CI: {row['CI_lower']:.3f}-{row['CI_upper']:.3f}), p = {row['pvalue']:.2e} ({sig})")
+
         self.log_msg("Analysis complete!")
 
 

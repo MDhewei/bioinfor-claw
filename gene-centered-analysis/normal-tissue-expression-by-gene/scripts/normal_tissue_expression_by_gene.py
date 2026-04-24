@@ -492,12 +492,16 @@ def main() -> None:
     )
     summary_df.to_csv(summary_tsv_path, sep="\t", index=False)
 
-    print(f"[DONE] Tissue table: {tsv_path}")
-    print(f"[DONE] Summary text: {summary_path}")
-    print(f"[DONE] Summary table: {summary_tsv_path}")
-    print(f"[DONE] Barplot PNG: {plot_path}")
-    print(f"[DONE] Barplot PDF: {os.path.splitext(plot_path)[0] + '.pdf'}")
-    print(f"[DONE] Expression category: {expression_category}")
+    # Print key results to stdout for agent consumption
+    print(f"\n[RESULTS] Gene: {resolved_gene_symbol} | Category: {expression_category}")
+    print(f"[RESULTS] Tissues: {len(tissue_df)} total, {n_detected} detected (threshold >= {args.expr_detect_threshold} TPM)")
+    if len(expr) > 0:
+        print(f"[RESULTS] Max expression: {float(expr.max()):.2f} TPM | Median: {float(expr.median()):.2f} TPM")
+        # Top 5 tissues by expression
+        top5 = tissue_df.nlargest(5, 'expression')
+        for _, row in top5.iterrows():
+            print(f"[RESULTS]   {row['tissue']}: {float(row['expression']):.2f} TPM")
+    print(f"[DONE] Results written to: {os.path.dirname(tsv_path)}")
 
 
 if __name__ == "__main__":

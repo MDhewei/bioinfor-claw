@@ -535,6 +535,14 @@ def main():
         for k, v in summary.items():
             f.write(f"{k}: {v}\n")
 
+    # Print key results to stdout for agent consumption
+    print(f"\n[RESULTS] Gene: {resolved_symbol} ({gene_id})")
+    for key, value in summary.items():
+        if key in ('query_gene', 'resolved_symbol', 'gene_id'):
+            continue
+        if value is not None and str(value) != 'nan':
+            print(f"[RESULTS]   {key}: {value}")
+
     print(f"[DONE] Results written to: {args.outdir}")
 
 

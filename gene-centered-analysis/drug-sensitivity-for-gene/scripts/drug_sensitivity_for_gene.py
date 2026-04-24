@@ -368,7 +368,17 @@ def main():
         f.write(fdr_results.head(20).to_string(index=False))
 
     print(f"Saved: {summary_file}")
-    print(f"\nAnalysis complete! Results saved to {args.outdir}")
+
+    # Print key results to stdout for agent consumption
+    print(f"\n[RESULTS] Gene: {args.gene} | Omics: {args.omics_type} | Total drugs tested: {len(results_df)} | Significant: {len(fdr_results)} (FDR <= {args.fdr_cutoff})")
+    if len(fdr_results) > 0:
+        print(f"[RESULTS] Strongest positive: {fdr_results.iloc[0]['drug']} (r = {fdr_results.iloc[0]['r']:.4f}, FDR = {fdr_results.iloc[0]['fdr']:.2e})")
+        print(f"[RESULTS] Strongest negative: {fdr_results.iloc[-1]['drug']} (r = {fdr_results.iloc[-1]['r']:.4f}, FDR = {fdr_results.iloc[-1]['fdr']:.2e})")
+        for _, row in fdr_results.head(5).iterrows():
+            print(f"[RESULTS]   {row['drug']}: r = {row['r']:.4f}, p = {row['pvalue']:.2e}, FDR = {row['fdr']:.2e}, n = {row.get('n_cell_lines', '?')}")
+    else:
+        print(f"[RESULTS] No drugs showed significant correlation with {args.gene} expression at FDR <= {args.fdr_cutoff}")
+    print(f"[DONE] Results saved to {args.outdir}")
     return 0
 
 

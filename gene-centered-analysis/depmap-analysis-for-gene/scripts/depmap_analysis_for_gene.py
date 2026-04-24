@@ -723,6 +723,14 @@ def main():
         for key, value in summary_data.items():
             f.write(f"{key}: {value}\n")
 
+    # Print key results to stdout for agent consumption
+    print(f"\n[RESULTS] DepMap Analysis for {gene} | Modules: {', '.join(modules)}")
+    for key, value in summary_data.items():
+        if key in ('gene',):
+            continue
+        if value is not None and value != '' and str(value) != 'nan':
+            print(f"[RESULTS]   {key}: {value}")
+
     print(f"[DONE] Results written to: {args.outdir}")
 
 

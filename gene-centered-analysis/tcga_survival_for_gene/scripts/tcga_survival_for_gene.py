@@ -704,6 +704,19 @@ def main():
         for k, v in summary.items():
             f.write(f"{k}: {v}\n")
 
+    # Print key results to stdout so the agent can read them directly
+    # without needing a separate read_file call.
+    print(f"\n[RESULTS] Gene: {resolved_symbol} | Cancer: {cohort_code} | Cases: {len(merged)}")
+    print(f"[RESULTS] High-expression group: {summary.get('n_high_group', '?')} | Low-expression group: {summary.get('n_low_group', '?')}")
+    for endpoint, stats in km_stats.items():
+        p = stats.get("logrank_p")
+        if p is not None:
+            p_str = f"p = {p:.6f}" if p >= 0.0001 else "p < 0.0001"
+            sig = "SIGNIFICANT" if p < 0.05 else "NOT significant"
+            print(f"[RESULTS] {endpoint.upper()} log-rank {p_str} ({sig})")
+        else:
+            print(f"[RESULTS] {endpoint.upper()} log-rank p = N/A (insufficient data)")
+
     print(f"[DONE] Results written to: {args.outdir}")
 
 

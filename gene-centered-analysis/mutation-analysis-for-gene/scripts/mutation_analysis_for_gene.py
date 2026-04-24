@@ -679,17 +679,21 @@ def main():
     print(f"Saved: {hs_file}")
 
     # ── Summary ───────────────────────────────────────────────────────────
-    print(f"\n=== Mutation Analysis Summary for {gene} ===")
-    print(f"Total mutations        : {total_muts}")
-    print(f"Cancer types           : {len(mut_counts)}")
-    print(f"Mutation types         : {dict(type_counts)}")
+    print(f"\n[RESULTS] Gene: {gene} | Total mutations: {total_muts} | Cancer types: {len(mut_counts)}")
+    print(f"[RESULTS] Mutation types: {dict(type_counts)}")
     if len(hs_df) > 0:
         top = hs_df.iloc[0]
-        print(f"Top hotspot            : position {top['position']} ({top['count']} mutations)")
+        print(f"[RESULTS] Top hotspot: position {top['position']} ({top['count']} mutations)")
+        # Show top 3 hotspots if available
+        for i, row in hs_df.head(3).iterrows():
+            print(f"[RESULTS]   #{i+1} p.{row.get('aa_change', row['position'])} — {row['count']} mutations")
     if not summary_df.empty:
         top_ct = summary_df.sort_values("frequency", ascending=False).iloc[0]
-        print(f"Highest frequency      : {top_ct['cancer_type']} ({top_ct['frequency']:.3f})")
-    print(f"Output dir             : {args.outdir}")
+        print(f"[RESULTS] Highest mutation frequency: {top_ct['cancer_type']} ({top_ct['frequency']:.3f})")
+        # Show top 5 cancer types
+        for _, row in summary_df.sort_values("frequency", ascending=False).head(5).iterrows():
+            print(f"[RESULTS]   {row['cancer_type']}: {row['n_mutations']} mutations, freq={row['frequency']:.4f}")
+    print(f"[DONE] Output dir: {args.outdir}")
 
     return 0
 

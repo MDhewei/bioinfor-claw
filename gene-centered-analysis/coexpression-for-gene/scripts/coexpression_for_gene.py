@@ -837,7 +837,21 @@ def main():
             f.write(f"Strongest negative: {fdr_results.iloc[-1]['gene']} (R={fdr_results.iloc[-1]['r']:.3f})\n")
 
     print(f"Saved: {summary_file}")
-    print(f"\nAnalysis complete! Results saved to {args.outdir}")
+
+    # Print key results to stdout for agent consumption
+    print(f"\n[RESULTS] Gene: {args.gene} | Method: {args.method} | Total correlations: {len(results_df)} | Significant: {len(fdr_results)}")
+    if len(fdr_results) > 0:
+        top_pos = fdr_results.iloc[0]
+        top_neg = fdr_results.iloc[-1]
+        print(f"[RESULTS] Strongest positive correlation: {top_pos['gene']} (r = {top_pos['r']:.4f}, FDR = {top_pos['fdr']:.2e})")
+        print(f"[RESULTS] Strongest negative correlation: {top_neg['gene']} (r = {top_neg['r']:.4f}, FDR = {top_neg['fdr']:.2e})")
+        # Top 5 positively correlated
+        for _, row in fdr_results.head(5).iterrows():
+            print(f"[RESULTS]   + {row['gene']}: r = {row['r']:.4f}, p = {row['pvalue']:.2e}, FDR = {row['fdr']:.2e}")
+        # Top 5 negatively correlated
+        for _, row in fdr_results.tail(5).iterrows():
+            print(f"[RESULTS]   - {row['gene']}: r = {row['r']:.4f}, p = {row['pvalue']:.2e}, FDR = {row['fdr']:.2e}")
+    print(f"[DONE] Results saved to {args.outdir}")
     return 0
 
 
