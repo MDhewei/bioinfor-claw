@@ -73,7 +73,8 @@ class KMResult:
 
 
 def ensure_dirs() -> None:
-    DATA_DIR.mkdir(exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def gzip_lines(url: str):
