@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pan-Cancer Gene Report"
+  short_description: "Generate TCGA, DepMap, cBioPortal, and CPTAC gene reports."
+  default_prompt: "Create a pan-cancer multi-omic report for a gene, including TCGA expression/survival, TCGA mutation/CNA survival, DepMap expression/copy-number/mutation, and CPTAC protein summaries."
