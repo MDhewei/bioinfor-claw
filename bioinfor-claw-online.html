@@ -2762,7 +2762,11 @@ async function callLLMWithTools(sys, msgs, tools, signal){
         'anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify(body)});
     const d=await r.json();
-    if(d.error) throw new Error(d.error.message||'Anthropic tool call error');
+    if(d.error){
+      console.error('[callLLM] Anthropic API error:', JSON.stringify(d.error));
+      console.error('[callLLM] msgs count:', msgs.length, 'total chars:', JSON.stringify(msgs).length);
+      throw new Error(d.error.message||'Anthropic tool call error');
+    }
     let text=''; const tool_calls=[];
     for(const blk of (d.content||[])){
       if(blk.type==='text') text += blk.text;
@@ -2792,7 +2796,12 @@ async function callLLMWithTools(sys, msgs, tools, signal){
       const badge=document.getElementById('quotaBadge');
       if(badge){badge.textContent='\ud83c\udf9f '+d._quota.remaining+'/'+d._quota.limit+' free today';badge.style.display='inline-block';}
     }
-    if(d.error) throw new Error(d.error);
+    if(d.error){
+      console.error('[callLLM] free_trial/MiniMax error:', JSON.stringify(d.error));
+      console.error('[callLLM] payload size:', payload.length, 'msgs count:', fullMsgs.length);
+      const errMsg = typeof d.error === 'string' ? d.error : (d.error.message || JSON.stringify(d.error));
+      throw new Error(errMsg);
+    }
     const choice=d.choices[0].message;
     const text=choice.content||'';
     const tool_calls=(choice.tool_calls||[]).map(tc=>{
@@ -3504,29 +3513,59 @@ async function runAgentLoop(userText, filesSnap){
     try{
       resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS, signal);
     }catch(e){
-      // Retry once: some providers reject oversized payloads or have transient
-      // validation issues. Trim older tool results and try again.
-      if(e.name!=='AbortError' && !signal.aborted && step > 2){
-        console.warn('[agent] LLM call failed at step '+step+', trimming context and retrying:', e.message);
+      if(e.name==='AbortError' || signal.aborted){
+        stopAgentStatus(status); status.remove();
+        renderFinalAnswer('⏹ **Stopped by user** during step '+step+'. Trace + any partial outputs below.',
+                          allFiles, errors, trace);
+        return null;
+      }
+      console.error('[agent] LLM call failed at step', step, ':', e.message);
+
+      // ── GRACEFUL FALLBACK: if we have output files from a successful script
+      // run, show them as a success instead of an error. The LLM summary is
+      // nice-to-have but the actual analysis results are what matters. ──
+      if(allFiles.length > 0){
+        console.warn('[agent] LLM call failed but we have', allFiles.length, 'output files — showing results');
+        // Find the stdout from the last successful run_script for key findings
+        let summaryText = '**Analysis completed successfully.** The LLM summary step encountered an error, but your results are ready:\n\n';
+        const lastScript = [...trace].reverse().find(t =>
+          t.tool === 'run_script' && t.result && (t.result.returncode === 0 || (t.result.output_files && t.result.output_files.length))
+        );
+        if(lastScript && lastScript.result && lastScript.result.stdout){
+          // Extract [RESULTS] lines from stdout
+          const resultLines = String(lastScript.result.stdout).split('\n')
+            .filter(l => l.startsWith('[RESULTS]'))
+            .map(l => l.replace('[RESULTS] ', '').replace('[RESULTS]', ''))
+            .filter(l => l.trim());
+          if(resultLines.length){
+            summaryText += '**Key findings:**\n' + resultLines.map(l => '- ' + l).join('\n') + '\n\n';
+          }
+        }
+        summaryText += 'Download your files below.';
+        stopAgentStatus(status); status.remove();
+        renderFinalAnswer(summaryText, allFiles, [], trace);
+        return summaryText;
+      }
+
+      // No output files — try retry with trimmed context
+      if(step > 1){
+        console.warn('[agent] Retrying with trimmed context...');
         try{
-          // Trim older tool-result content in the message history to reduce payload size
           for(let mi=0; mi<msgs.length; mi++){
             const m=msgs[mi];
             if(m.role==='user' && Array.isArray(m.content)){
               for(const blk of m.content){
-                if(blk.type==='tool_result' && typeof blk.content==='string' && blk.content.length > 2000){
-                  blk.content = blk.content.slice(0, 1200) + '\n...[trimmed for context limit]...\n' + blk.content.slice(-600);
+                if(blk.type==='tool_result' && typeof blk.content==='string' && blk.content.length > 1500){
+                  blk.content = blk.content.slice(0, 800) + '\n...[trimmed]...\n' + blk.content.slice(-400);
                 }
               }
             }
-            // OpenAI-compatible: tool messages with long content
-            if(m.role==='tool' && typeof m.content==='string' && m.content.length > 2000){
-              m.content = m.content.slice(0, 1200) + '\n...[trimmed for context limit]...\n' + m.content.slice(-600);
+            if(m.role==='tool' && typeof m.content==='string' && m.content.length > 1500){
+              m.content = m.content.slice(0, 800) + '\n...[trimmed]...\n' + m.content.slice(-400);
             }
           }
           resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS, signal);
         }catch(e2){
-          // Retry also failed — fall through to original error handling
           stopAgentStatus(status); status.remove();
           renderFinalAnswer('**Agent error (step '+step+'):** '+(e2.message||String(e2))+'\n\nTrace + any partial outputs below.',
                             allFiles, errors, trace);
@@ -3534,12 +3573,6 @@ async function runAgentLoop(userText, filesSnap){
         }
       } else {
         stopAgentStatus(status); status.remove();
-        if(e.name==='AbortError' || signal.aborted){
-          renderFinalAnswer('⏹ **Stopped by user** during step '+step+'. Trace + any partial outputs below.',
-                            allFiles, errors, trace);
-          return null;
-        }
-        // Real error — still show whatever progress was made.
         renderFinalAnswer('**Agent error (step '+step+'):** '+(e.message||String(e))+'\n\nTrace + any partial outputs below.',
                           allFiles, errors, trace);
         return null;

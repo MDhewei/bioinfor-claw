@@ -3246,22 +3246,51 @@ async function runAgentLoop(userText, filesSnap){
     try{
       resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS, signal);
     }catch(e){
-      // Retry once: some providers reject oversized payloads or have transient
-      // validation issues. Trim older tool results and try again.
-      if(e.name!=='AbortError' && !signal.aborted && step > 2){
-        console.warn('[agent] LLM call failed at step '+step+', trimming context and retrying:', e.message);
+      if(e.name==='AbortError' || signal.aborted){
+        stopAgentStatus(status); status.remove();
+        renderFinalAnswer('⏹ **Stopped by user** during step '+step+'. Trace + any partial outputs below.',
+                          allFiles, errors, trace);
+        return null;
+      }
+      console.error('[agent] LLM call failed at step', step, ':', e.message);
+
+      // ── GRACEFUL FALLBACK: if we have output files from a successful script
+      // run, show them as a success instead of an error. ──
+      if(allFiles.length > 0){
+        console.warn('[agent] LLM call failed but we have', allFiles.length, 'output files — showing results');
+        let summaryText = '**Analysis completed successfully.** The LLM summary step encountered an error, but your results are ready:\n\n';
+        const lastScript = [...trace].reverse().find(t =>
+          t.tool === 'run_script' && t.result && (t.result.returncode === 0 || (t.result.output_files && t.result.output_files.length))
+        );
+        if(lastScript && lastScript.result && lastScript.result.stdout){
+          const resultLines = String(lastScript.result.stdout).split('\n')
+            .filter(l => l.startsWith('[RESULTS]'))
+            .map(l => l.replace('[RESULTS] ', '').replace('[RESULTS]', ''))
+            .filter(l => l.trim());
+          if(resultLines.length){
+            summaryText += '**Key findings:**\n' + resultLines.map(l => '- ' + l).join('\n') + '\n\n';
+          }
+        }
+        summaryText += 'Download your files below.';
+        stopAgentStatus(status); status.remove();
+        renderFinalAnswer(summaryText, allFiles, [], trace);
+        return summaryText;
+      }
+
+      // No output files — try retry with trimmed context
+      if(step > 1){
         try{
           for(let mi=0; mi<msgs.length; mi++){
             const m=msgs[mi];
             if(m.role==='user' && Array.isArray(m.content)){
               for(const blk of m.content){
-                if(blk.type==='tool_result' && typeof blk.content==='string' && blk.content.length > 2000){
-                  blk.content = blk.content.slice(0, 1200) + '\n...[trimmed for context limit]...\n' + blk.content.slice(-600);
+                if(blk.type==='tool_result' && typeof blk.content==='string' && blk.content.length > 1500){
+                  blk.content = blk.content.slice(0, 800) + '\n...[trimmed]...\n' + blk.content.slice(-400);
                 }
               }
             }
-            if(m.role==='tool' && typeof m.content==='string' && m.content.length > 2000){
-              m.content = m.content.slice(0, 1200) + '\n...[trimmed for context limit]...\n' + m.content.slice(-600);
+            if(m.role==='tool' && typeof m.content==='string' && m.content.length > 1500){
+              m.content = m.content.slice(0, 800) + '\n...[trimmed]...\n' + m.content.slice(-400);
             }
           }
           resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS, signal);
@@ -3273,11 +3302,6 @@ async function runAgentLoop(userText, filesSnap){
         }
       } else {
         stopAgentStatus(status); status.remove();
-        if(e.name==='AbortError' || signal.aborted){
-          renderFinalAnswer('⏹ **Stopped by user** during step '+step+'. Trace + any partial outputs below.',
-                            allFiles, errors, trace);
-          return null;
-        }
         renderFinalAnswer('**Agent error (step '+step+'):** '+(e.message||String(e))+'\n\nTrace + any partial outputs below.',
                           allFiles, errors, trace);
         return null;

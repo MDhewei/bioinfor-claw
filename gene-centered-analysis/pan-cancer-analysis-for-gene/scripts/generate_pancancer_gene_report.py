@@ -707,35 +707,64 @@ def build_report() -> None:
     styles.add(ParagraphStyle(name="Caption", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#5f6872")))
     chart = Chart()
 
-    # ── Phase 1: Gather TCGA data ──
-    tcga_frames: dict[str, pd.DataFrame] = {}
+    # ── Phase 1+2: TCGA data — process ONE project at a time to limit memory ──
+    # Each project's DataFrame is created, used for KM + alteration analysis,
+    # then immediately released.  This keeps peak memory at ~1 DataFrame instead of 33.
     km_results: dict[str, KMResult] = {}
+    tcga_medians: list[tuple[str, float]] = []
+    tcga_counts: list[tuple[str, float]] = []
+    alteration_rows: list[dict] = []
     failed = []
+    try:
+        entrez_id = gene_entrez_id()
+    except Exception:
+        entrez_id = None
     for project in TCGA_PROJECTS:
         print(f"TCGA {project}")
         try:
             df, result = analyze_tcga_project(project)
             if result.n >= 20:
-                tcga_frames[project] = df
                 km_results[project] = result
+                tcga_medians.append((project, float(df["expr"].median())))
+                tcga_counts.append((project, float(len(df))))
+                # Compute alteration analysis for THIS project while df is in memory
+                if entrez_id is not None:
+                    try:
+                        study = tcga_study_id(project)
+                        sample_list = cbio_sample_list_id(study)
+                        if sample_list:
+                            gistic = cbio_profile_id(study, "_gistic")
+                            mutations = cbio_profile_id(study, "_mutations")
+                            cna_data = cbio_molecular_data(gistic, sample_list, entrez_id) if gistic else []
+                            mut_data = cbio_mutations(mutations, sample_list, entrez_id) if mutations else []
+                            cna_by_patient = {}
+                            for item in cna_data:
+                                try:
+                                    cna_by_patient[item["patientId"]] = int(float(item["value"]))
+                                except (KeyError, ValueError):
+                                    pass
+                            mutated = {m["patientId"] for m in mut_data if m.get("patientId")}
+                            for kind, patients in [("mutation", mutated),
+                                                   ("amplification", {p for p, v in cna_by_patient.items() if v == 2}),
+                                                   ("gain_or_amplification", {p for p, v in cna_by_patient.items() if v >= 1}),
+                                                   ("deletion", {p for p, v in cna_by_patient.items() if v <= -1})]:
+                                surv = alteration_survival(df, patients, kind)
+                                alteration_rows.append({"project": project, "alteration": kind,
+                                    "altered_patients": surv["n_altered"], "unaltered_patients": surv["n_unaltered"],
+                                    "altered_events": surv["altered_events"], "unaltered_events": surv["unaltered_events"],
+                                    "logrank_p": surv["p_value"], "direction": surv["direction"],
+                                    "altered_curve": surv["altered_curve"], "unaltered_curve": surv["unaltered_curve"]})
+                    except Exception as exc:
+                        print(f"  cBioPortal {project}: {exc}")
+            del df  # Release THIS project's DataFrame immediately
         except Exception as exc:
             failed.append((project, str(exc)))
         gc.collect()
 
-    # Pre-compute summary stats we need for charts BEFORE releasing DataFrames
-    tcga_medians = sorted([(p, float(df["expr"].median())) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
-    tcga_counts = sorted([(p, float(len(df))) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
-
-    # ── Phase 2: cBioPortal alteration analysis (needs tcga_frames) ──
-    print("TCGA cBioPortal mutation/CNA")
-    try:
-        alteration_df = analyze_tcga_alterations(tcga_frames)
-    except Exception as exc:
-        print(f"[WARNING] cBioPortal alteration analysis failed: {exc}")
-        alteration_df = pd.DataFrame()
-
-    # Release raw TCGA DataFrames — we only need km_results from here on
-    del tcga_frames
+    tcga_medians = sorted(tcga_medians, key=lambda x: x[1], reverse=True)
+    tcga_counts = sorted(tcga_counts, key=lambda x: x[1], reverse=True)
+    alteration_df = pd.DataFrame(alteration_rows) if alteration_rows else pd.DataFrame()
+    del alteration_rows
     gc.collect()
 
     # ── Phase 3: DepMap (gene-specific streaming, low memory) ──
