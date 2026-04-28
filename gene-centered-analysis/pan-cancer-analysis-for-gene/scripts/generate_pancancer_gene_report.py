@@ -448,7 +448,10 @@ def depmap_gene_column(filename: str, gene_symbol: str | None = None) -> pd.Data
         return pd.read_csv(cache)
     rows_iter = stream_csv_url(depmap_file_url(filename))
     header = next(rows_iter)
-    gene_col = next(i for i, h in enumerate(header) if h.startswith(f"{gene_symbol} "))
+    gene_col = next((i for i, h in enumerate(header) if h.startswith(f"{gene_symbol} ")), None)
+    if gene_col is None:
+        print(f"  Warning: {gene_symbol} not found in {filename} header")
+        return pd.DataFrame(columns=["ModelID", gene_symbol])
     model_col = header.index("ModelID") if "ModelID" in header else 0
     default_col = header.index("IsDefaultEntryForModel") if "IsDefaultEntryForModel" in header else None
     rows = []
@@ -514,6 +517,8 @@ class Chart:
         from reportlab.graphics.shapes import Drawing, Line, Rect, String
 
         items = items[:max_items]
+        if not items:
+            return Paragraph(f"<i>{title}: no data available</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         d = Drawing(self.width, self.height)
         ml, mr, mt, mb = 92, 18, 28, 24
         pw, ph = self.width - ml - mr, self.height - mt - mb
@@ -543,10 +548,14 @@ class Chart:
         from reportlab.graphics.shapes import Drawing, Line, Rect, String
 
         labels = list(data_by_label.keys())
+        if not labels:
+            return Paragraph(f"<i>{title}: no data available</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         d = Drawing(self.width, self.height)
         ml, mr, mt, mb = 48, 12, 30, 50
         pw, ph = self.width - ml - mr, self.height - mt - mb
         all_vals = [v for vals in data_by_label.values() for v in vals if not pd.isna(v)]
+        if not all_vals:
+            return Paragraph(f"<i>{title}: no numeric data</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         ymin, ymax = min(all_vals), max(all_vals)
         pad = (ymax - ymin) * 0.08 or 1
         ymin, ymax = ymin - pad, ymax + pad
@@ -647,6 +656,8 @@ class Chart:
         from reportlab.graphics.shapes import Circle, Drawing, Line, String
 
         paired = [(x, y) for x, y in zip(xvals, yvals) if not pd.isna(x) and not pd.isna(y)]
+        if len(paired) < 2:
+            return Paragraph(f"<i>{title}: insufficient data points ({len(paired)})</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         if len(paired) > 1200:
             step = max(1, len(paired) // 1200)
             paired = paired[::step]
@@ -717,30 +728,44 @@ def build_report() -> None:
 
     # ── Phase 2: cBioPortal alteration analysis (needs tcga_frames) ──
     print("TCGA cBioPortal mutation/CNA")
-    alteration_df = analyze_tcga_alterations(tcga_frames)
+    try:
+        alteration_df = analyze_tcga_alterations(tcga_frames)
+    except Exception as exc:
+        print(f"[WARNING] cBioPortal alteration analysis failed: {exc}")
+        alteration_df = pd.DataFrame()
 
     # Release raw TCGA DataFrames — we only need km_results from here on
     del tcga_frames
     gc.collect()
 
     # ── Phase 3: DepMap (gene-specific streaming, low memory) ──
-    print("DepMap metadata")
-    meta = depmap_model_metadata()
-    print("DepMap expression")
-    dep_expr = depmap_gene_column("OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv").rename(columns={GENE_SYMBOL: "expr"})
-    print("DepMap copy number")
-    dep_cn = depmap_gene_column("PortalOmicsCNGeneLog2.csv").rename(columns={GENE_SYMBOL: "cn_log2"})
-    print("DepMap mutations")
-    dep_mut = depmap_gene_mutations()
-    dep = meta.merge(dep_expr, on="ModelID", how="left").merge(dep_cn, on="ModelID", how="left")
-    dep["Lineage"] = dep["Lineage"].fillna("Unknown")
-    del dep_expr, dep_cn, meta
-    gc.collect()
-    dep_mut_annot = dep_mut.merge(depmap_model_metadata(), on="ModelID", how="left") if len(dep_mut) else dep_mut
+    try:
+        print("DepMap metadata")
+        meta = depmap_model_metadata()
+        print("DepMap expression")
+        dep_expr = depmap_gene_column("OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv").rename(columns={GENE_SYMBOL: "expr"})
+        print("DepMap copy number")
+        dep_cn = depmap_gene_column("PortalOmicsCNGeneLog2.csv").rename(columns={GENE_SYMBOL: "cn_log2"})
+        print("DepMap mutations")
+        dep_mut = depmap_gene_mutations()
+        dep = meta.merge(dep_expr, on="ModelID", how="left").merge(dep_cn, on="ModelID", how="left")
+        dep["Lineage"] = dep["Lineage"].fillna("Unknown")
+        dep_mut_annot = dep_mut.merge(meta[["ModelID", "CellLineName", "Lineage"]], on="ModelID", how="left") if len(dep_mut) else dep_mut
+        del dep_expr, dep_cn, meta
+        gc.collect()
+    except Exception as exc:
+        print(f"[WARNING] DepMap data fetch failed: {exc}")
+        dep = pd.DataFrame(columns=["ModelID", "Lineage", "expr", "cn_log2"])
+        dep_mut = pd.DataFrame()
+        dep_mut_annot = pd.DataFrame()
 
     # ── Phase 4: CPTAC protein ──
-    print("CPTAC protein")
-    protein_df = cptac_protein_data(gene_entrez_id())
+    try:
+        print("CPTAC protein")
+        protein_df = cptac_protein_data(gene_entrez_id())
+    except Exception as exc:
+        print(f"[WARNING] CPTAC data fetch failed: {exc}")
+        protein_df = pd.DataFrame()
 
     # ── Pre-compute summary stats for [RESULTS] output (before data is released) ──
     _summary = {
@@ -1027,7 +1052,24 @@ def build_report() -> None:
     story.append(Spacer(1, 10))
     story.append(Paragraph(f"Primary data sources: TCGA/GDC Hub via UCSC Xena; DepMap portal download API, DepMap Public 26Q1 released 2026-04-01; Human Protein Atlas {GENE_SYMBOL} entry and gene-specific literature for interpretation.", styles["Small"]))
 
-    doc.build(story)
+    try:
+        doc.build(story)
+    except Exception as exc:
+        print(f"[WARNING] PDF generation failed: {exc}", flush=True)
+        # Try to produce a minimal PDF with just text summary
+        try:
+            from reportlab.platypus import SimpleDocTemplate as _Doc
+            fallback_doc = _Doc(str(PDF_OUT), pagesize=letter)
+            fallback_story = [
+                Paragraph(f"{GENE_SYMBOL} Pan-Cancer Report (partial)", styles["Title"]),
+                Spacer(1, 12),
+                Paragraph(f"Full report generation encountered an error: {exc}", styles["BodyText"]),
+                Spacer(1, 8),
+                Paragraph("The appendix CSV contains all numeric results. Re-run with a different gene if the issue persists.", styles["BodyText"]),
+            ]
+            fallback_doc.build(fallback_story)
+        except Exception:
+            pass  # PDF will be missing, but [RESULTS] + [DONE] still printed below
 
     # ── Print key results to stdout for agent consumption ──
     # Uses pre-computed _summary dict (data has been released for memory)

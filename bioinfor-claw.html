@@ -2618,15 +2618,27 @@ async function runTool(name, args, signal){
 }
 
 // Compact a tool result for feedback to the LLM.
-// Heavy fields like full stdout are already capped by the server.
+// Heavy fields like full stdout are already capped by the server,
+// but we further truncate here to keep the message payload small and
+// avoid LLM API validation errors on oversized conversations.
 function compactToolResult(name, result){
+  if(!result) return result;
+  const r = {...result};
   // Strip URL prefixes to just server-relative paths to save tokens
-  if(result && result.output_files){
-    result = {...result,
-      output_files: result.output_files.map(f=>({
-        name:f.name, size:f.size, ext:f.ext, url:f.url}))};
+  if(r.output_files){
+    r.output_files = r.output_files.map(f=>({
+      name:f.name, size:f.size, ext:f.ext, url:f.url}));
   }
-  return result;
+  // Truncate stdout/stderr to avoid bloating messages sent to the LLM
+  if(typeof r.stdout === 'string' && r.stdout.length > 4000){
+    r.stdout = r.stdout.slice(0, 2000) + '\n...[truncated]...\n' + r.stdout.slice(-1500);
+  }
+  if(typeof r.stderr === 'string' && r.stderr.length > 2000){
+    r.stderr = r.stderr.slice(0, 1000) + '\n...[truncated]...\n' + r.stderr.slice(-800);
+  }
+  // Strip the full command string (already in trace) to save tokens
+  delete r.command;
+  return r;
 }
 
 // Render one "agent step" row in the chat UI: shows tool calls + results.
@@ -2961,10 +2973,9 @@ function buildAgentSystemPrompt(stepBudget){
     '- For DepMap co-expression: ALWAYS use the standalone script "depmap_coexpression.py" (NOT "depmap_analysis_for_gene.py --modules coexpression").',
     '- For DepMap co-essentiality: ALWAYS use the standalone script "depmap_coessentiality.py" (NOT "depmap_analysis_for_gene.py --modules coessentiality").',
     '- The standalone scripts produce rich output: barplot (PNG+PDF), network visualization (PNG+PDF), and FDR-corrected TSV tables.',
-    '- The main script\'s --modules coexpression/coessentiality only produces a basic top-N TSV with NO plots and NO FDR correction. NEVER use it for co-expression/co-essentiality.',
+    '- ALL DepMap scripts now stream data directly from the DepMap API. Do NOT call depmap_downloader.py or pass --expression-file / --essentiality-file / --mutation-file / --copy-number-file / --metadata-file. These flags are accepted but IGNORED.',
     '- Example correct call: run_script({skill_id: "gene-centered-analysis/depmap-analysis-for-gene", script: "depmap_coexpression.py", args: ["--gene", "KRAS", "--top-n", "30", "--fdr-cutoff", "0.05"]})',
     '- Example WRONG call: run_script({skill_id: "gene-centered-analysis/depmap-analysis-for-gene", script: "depmap_analysis_for_gene.py", args: ["--gene", "KRAS", "--modules", "coexpression"]})',
-    '- For depmap_coexpression.py and depmap_coessentiality.py: do NOT include --expression-file or --essentiality-file in your EXEC_ARGS. The server auto-locates cached DepMap data and injects the correct paths.',
     '- If co-expression or co-essentiality analysis fails, do NOT fall back to generic plot skills (plot-scatter-bar, plot_heatmap). Instead, retry the correct script or report the error.',
     '',
     'ABSOLUTE RULE — NEVER FABRICATE EXECUTION:',
@@ -3235,16 +3246,42 @@ async function runAgentLoop(userText, filesSnap){
     try{
       resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS, signal);
     }catch(e){
-      stopAgentStatus(status); status.remove();
-      if(e.name==='AbortError' || signal.aborted){
-        renderFinalAnswer('⏹ **Stopped by user** during step '+step+'. Trace + any partial outputs below.',
+      // Retry once: some providers reject oversized payloads or have transient
+      // validation issues. Trim older tool results and try again.
+      if(e.name!=='AbortError' && !signal.aborted && step > 2){
+        console.warn('[agent] LLM call failed at step '+step+', trimming context and retrying:', e.message);
+        try{
+          for(let mi=0; mi<msgs.length; mi++){
+            const m=msgs[mi];
+            if(m.role==='user' && Array.isArray(m.content)){
+              for(const blk of m.content){
+                if(blk.type==='tool_result' && typeof blk.content==='string' && blk.content.length > 2000){
+                  blk.content = blk.content.slice(0, 1200) + '\n...[trimmed for context limit]...\n' + blk.content.slice(-600);
+                }
+              }
+            }
+            if(m.role==='tool' && typeof m.content==='string' && m.content.length > 2000){
+              m.content = m.content.slice(0, 1200) + '\n...[trimmed for context limit]...\n' + m.content.slice(-600);
+            }
+          }
+          resp = await callLLMWithTools(sys, msgs, AGENT_TOOLS, signal);
+        }catch(e2){
+          stopAgentStatus(status); status.remove();
+          renderFinalAnswer('**Agent error (step '+step+'):** '+(e2.message||String(e2))+'\n\nTrace + any partial outputs below.',
+                            allFiles, errors, trace);
+          return null;
+        }
+      } else {
+        stopAgentStatus(status); status.remove();
+        if(e.name==='AbortError' || signal.aborted){
+          renderFinalAnswer('⏹ **Stopped by user** during step '+step+'. Trace + any partial outputs below.',
+                            allFiles, errors, trace);
+          return null;
+        }
+        renderFinalAnswer('**Agent error (step '+step+'):** '+(e.message||String(e))+'\n\nTrace + any partial outputs below.',
                           allFiles, errors, trace);
         return null;
       }
-      // Real error — still show whatever progress was made.
-      renderFinalAnswer('**Agent error (step '+step+'):** '+(e.message||String(e))+'\n\nTrace + any partial outputs below.',
-                        allFiles, errors, trace);
-      return null;
     }
 
     // Execute all tool calls in this response

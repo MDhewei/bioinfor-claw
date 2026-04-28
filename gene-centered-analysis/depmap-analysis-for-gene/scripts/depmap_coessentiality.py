@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 """DepMap co-essentiality analysis for a single gene.
 
-Computes Pearson/Spearman correlations between the query gene's CRISPR
-dependency score and all other genes' dependency scores across DepMap cell
-lines. Genes that are co-essential tend to work in the same pathway or
-complex — they are "needed together" in the same cell lines.
+Computes Pearson correlations between the query gene's CRISPR dependency
+score and all other genes' dependency scores across DepMap cell lines.
+Genes that are co-essential tend to work in the same pathway or complex.
+
+DATA LOADING: Streams the essentiality matrix directly from the DepMap API
+in two passes — never loads the full multi-GB file into memory.
 
 Produces:
   - Ranked correlation table with FDR correction (TSV)
   - Top co-essential genes horizontal bar plot (PNG + PDF)
   - Co-essentiality network visualization (PNG + PDF)
-
-Data: real DepMap CRISPR gene effect CSV (CRISPRGeneEffect.csv).
-NOT patient/tumor samples — these are cancer cell lines.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
+import io
+import math
 import os
 import re
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
+from urllib.request import urlopen
 
-import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -35,13 +37,42 @@ except ImportError:
     def init_style(**kw): pass
     def save_fig(fig, path, close=True, **kw):
         fig.savefig(path, dpi=300, bbox_inches='tight')
-        if close: import matplotlib.pyplot as _p; _p.close(fig)
+        if close: plt.close(fig)
 
 
-# ─── scipy-free fallback implementations ─────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# DepMap streaming infrastructure
+# ═══════════════════════════════════════════════════════════
+DEPMAP_RELEASE = "DepMap Public 26Q1"
+DEPMAP_INDEX = "https://depmap.org/portal/api/download/files"
+ESSENTIALITY_FILE = "CRISPRGeneEffect.csv"
 
+_file_url_cache: Dict[str, str] = {}
+
+
+def depmap_file_url(filename: str) -> str:
+    if filename in _file_url_cache:
+        return _file_url_cache[filename]
+    index_data = urlopen(DEPMAP_INDEX, timeout=120).read().decode("utf-8")
+    for row in csv.DictReader(io.StringIO(index_data)):
+        if row.get("release") == DEPMAP_RELEASE and row.get("filename") == filename:
+            _file_url_cache[filename] = row["url"]
+            return row["url"]
+    raise RuntimeError(f"Missing DepMap file: {filename}")
+
+
+def stream_csv_url(url: str):
+    with urlopen(url, timeout=600) as response:
+        text = io.TextIOWrapper(response, encoding="utf-8", newline="")
+        reader = csv.reader(text)
+        for row in reader:
+            yield row
+
+
+# ═══════════════════════════════════════════════════════════
+# scipy-free statistics
+# ═══════════════════════════════════════════════════════════
 def _betacf(a, b, x):
-    """Continued fraction for incomplete beta (Numerical Recipes)."""
     MAXIT, EPS, FPMIN = 200, 3e-14, 1e-30
     qab, qap, qam = a + b, a + 1.0, a - 1.0
     c = 1.0
@@ -68,7 +99,6 @@ def _betacf(a, b, x):
 
 
 def _betainc(a, b, x):
-    """Regularised incomplete beta function I_x(a, b)."""
     if x <= 0: return 0.0
     if x >= 1: return 1.0
     ln_pre = (math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
@@ -80,124 +110,123 @@ def _betainc(a, b, x):
         return 1.0 - front * _betacf(b, a, 1.0 - x) / b
 
 
-def _pearsonr_np(x, y):
-    """Pearson r with two-tailed p-value (numpy only)."""
-    x = np.asarray(x, dtype=np.float64); y = np.asarray(y, dtype=np.float64)
-    n = len(x)
-    if n < 3: return np.nan, 1.0
-    xm = x - x.mean(); ym = y - y.mean()
-    denom = math.sqrt(np.dot(xm, xm) * np.dot(ym, ym))
-    if denom < 1e-16: return 0.0, 1.0
-    r = float(max(-1.0, min(1.0, np.dot(xm, ym) / denom)))
-    if abs(r) == 1.0: return r, 0.0
+def pearson_r_and_p(n, sum_x, sum_y, sum_xy, sum_x2, sum_y2):
+    if n < 3:
+        return 0.0, 1.0
+    denom_x = n * sum_x2 - sum_x * sum_x
+    denom_y = n * sum_y2 - sum_y * sum_y
+    if denom_x <= 0 or denom_y <= 0:
+        return 0.0, 1.0
+    r = (n * sum_xy - sum_x * sum_y) / math.sqrt(denom_x * denom_y)
+    r = max(-1.0, min(1.0, r))
+    if abs(r) == 1.0:
+        return r, 0.0
     t2 = r * r * (n - 2) / (1.0 - r * r)
     df = n - 2
-    return r, _betainc(df / 2.0, 0.5, df / (df + t2))
+    p = _betainc(df / 2.0, 0.5, df / (df + t2))
+    return r, p
 
 
-def _rankdata_np(a):
-    """Rank data (average ties), numpy only."""
-    a = np.asarray(a, dtype=np.float64)
-    sorter = np.argsort(a, kind='mergesort')
-    inv = np.empty_like(sorter); inv[sorter] = np.arange(len(a))
-    a_sorted = a[sorter]
-    obs = np.concatenate(([True], a_sorted[1:] != a_sorted[:-1]))
-    dense = np.cumsum(obs)[inv]
-    count = np.bincount(dense)
-    cumcount = np.concatenate(([0], np.cumsum(count)))
-    ranks = np.empty(len(a), dtype=np.float64)
-    for i in range(len(a)):
-        d = dense[i]; ranks[i] = 0.5 * (cumcount[d] + cumcount[d] + count[d] + 1)
-    return ranks
+# ═══════════════════════════════════════════════════════════
+# Two-pass streaming correlation
+# ═══════════════════════════════════════════════════════════
+def find_gene_col_index(header, gene):
+    for i, h in enumerate(header):
+        if h == gene or h.startswith(f"{gene} "):
+            return i
+    raise ValueError(f"Gene {gene} not found in header. First 10: {header[:10]}")
 
 
-def _spearmanr_np(x, y):
-    """Spearman rank correlation (numpy only)."""
-    return _pearsonr_np(_rankdata_np(x), _rankdata_np(y))
-
-
-try:
-    from scipy.stats import pearsonr as _scipy_pearsonr, spearmanr as _scipy_spearmanr
-    from scipy.stats import rankdata as _scipy_rankdata
-    _pearsonr = _scipy_pearsonr
-    _rankdata = _scipy_rankdata
-    def _spearmanr(x, y):
-        res = _scipy_spearmanr(x, y)
-        return (res.correlation if hasattr(res, 'correlation') else res[0],
-                res.pvalue if hasattr(res, 'pvalue') else res[1])
-except ImportError:
-    _pearsonr = _pearsonr_np
-    _spearmanr = _spearmanr_np
-    _rankdata = _rankdata_np
-
-
-# ─── Utilities ────────────────────────────────────────────────────────────────
-
-def normalize_gene_symbol(gene: str) -> str:
-    return re.sub(r"\s+", "", gene.strip()).upper()
-
-
-def find_gene_column(columns: List[str], gene_symbol: str) -> Optional[str]:
-    if gene_symbol in columns:
-        return gene_symbol
-    pat = re.compile(rf"^{re.escape(gene_symbol)}(\s|\(|\[|$)", re.IGNORECASE)
-    matches = [c for c in columns if pat.search(str(c))]
-    return matches[0] if matches else None
-
-
-def extract_symbol(col: str) -> str:
+def extract_symbol(col):
     m = re.match(r"^([A-Za-z0-9_.-]+)", str(col))
     return m.group(1).upper() if m else str(col).upper()
 
 
-# ─── Core analysis ────────────────────────────────────────────────────────────
+def streaming_correlations(url, gene, method="pearson"):
+    # Pass 1: extract target gene column
+    print(f"[INFO] Pass 1: extracting {gene} dependency scores...")
+    rows_iter = stream_csv_url(url)
+    header = next(rows_iter)
+    gene_col_idx = find_gene_col_index(header, gene)
+    model_col = header.index("ModelID") if "ModelID" in header else 0
 
-def compute_correlations(
-    matrix: pd.DataFrame,
-    gene: str,
-    method: str = "pearson",
-) -> pd.DataFrame:
-    """Correlate `gene` dependency scores against all other genes.
-    Returns full ranked DataFrame with gene_symbol, correlation, p-value, FDR."""
-
-    col = find_gene_column(list(matrix.columns), gene)
-    if col is None:
-        raise ValueError(f"Gene {gene} not found in essentiality matrix columns.")
-
-    target = matrix[col].dropna()
-    other_cols = [c for c in matrix.columns if c != col]
-
-    results = []
-    corr_fn = _pearsonr if method == "pearson" else _spearmanr
-
-    for c in other_cols:
-        vec = matrix[c].reindex(target.index).dropna()
-        shared = target.index.intersection(vec.index)
-        if len(shared) < 10:
-            continue
-        t = target.loc[shared].values
-        v = vec.loc[shared].values
-        if np.std(v) < 1e-6:
-            continue
+    target_values = {}
+    for row in rows_iter:
         try:
-            r, p = corr_fn(t, v)
-            if np.isnan(r):
-                continue
-            results.append({
-                "gene_column": c,
-                "gene_symbol": extract_symbol(c),
-                "correlation": r,
-                "pvalue": p,
-                "n_samples": len(shared),
-            })
-        except Exception:
+            target_values[row[model_col]] = float(row[gene_col_idx])
+        except (ValueError, IndexError):
             continue
+
+    n_models = len(target_values)
+    print(f"[INFO] Got {n_models} models for {gene}")
+    if n_models < 10:
+        raise ValueError(f"Too few models ({n_models}) for {gene}")
+
+    # Pass 2: accumulate running stats
+    print(f"[INFO] Pass 2: computing correlations against all genes...")
+    rows_iter = stream_csv_url(url)
+    header = next(rows_iter)
+
+    gene_columns = []
+    for i, h in enumerate(header):
+        if i == model_col or i == gene_col_idx:
+            continue
+        if h and (h[0].isalpha() or h[0].isdigit()):
+            gene_columns.append((i, h))
+
+    n_genes = len(gene_columns)
+    print(f"[INFO] Will correlate against {n_genes} gene columns")
+
+    acc_n = np.zeros(n_genes, dtype=np.int32)
+    acc_sx = np.zeros(n_genes, dtype=np.float64)
+    acc_sy = np.zeros(n_genes, dtype=np.float64)
+    acc_sxy = np.zeros(n_genes, dtype=np.float64)
+    acc_sx2 = np.zeros(n_genes, dtype=np.float64)
+    acc_sy2 = np.zeros(n_genes, dtype=np.float64)
+
+    rows_processed = 0
+    for row in rows_iter:
+        model_id = row[model_col]
+        if model_id not in target_values:
+            continue
+        x = target_values[model_id]
+        for j, (col_idx, _) in enumerate(gene_columns):
+            try:
+                y = float(row[col_idx])
+            except (ValueError, IndexError):
+                continue
+            acc_n[j] += 1
+            acc_sx[j] += x
+            acc_sy[j] += y
+            acc_sxy[j] += x * y
+            acc_sx2[j] += x * x
+            acc_sy2[j] += y * y
+        rows_processed += 1
+        if rows_processed % 500 == 0:
+            print(f"[INFO] Processed {rows_processed}/{n_models} cell lines...")
+
+    print(f"[INFO] Computing final correlations for {n_genes} genes...")
+    results = []
+    for j, (col_idx, col_name) in enumerate(gene_columns):
+        n = int(acc_n[j])
+        if n < 10:
+            continue
+        r, p = pearson_r_and_p(n, acc_sx[j], acc_sy[j], acc_sxy[j], acc_sx2[j], acc_sy2[j])
+        if math.isnan(r):
+            continue
+        results.append({
+            "gene_column": col_name,
+            "gene_symbol": extract_symbol(col_name),
+            "correlation": r,
+            "pvalue": p,
+            "n_samples": n,
+        })
 
     df = pd.DataFrame(results)
     if len(df) == 0:
         return df
 
-    # FDR (Benjamini-Hochberg with monotonicity enforcement)
+    # FDR (Benjamini-Hochberg)
     pvals = df["pvalue"].values
     n = len(pvals)
     sort_idx = np.argsort(pvals)
@@ -213,10 +242,10 @@ def compute_correlations(
     return df
 
 
-# ─── Helper: select top positive AND top negative hits ───────────────────────
-
-def _select_top_pos_neg(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
-    """Select top_n/2 most positive and top_n/2 most negative correlations."""
+# ═══════════════════════════════════════════════════════════
+# Plotting
+# ═══════════════════════════════════════════════════════════
+def _select_top_pos_neg(df, top_n):
     pos = df[df["correlation"] > 0].sort_values("correlation", ascending=False)
     neg = df[df["correlation"] < 0].sort_values("correlation", ascending=True)
     half = top_n // 2
@@ -229,219 +258,154 @@ def _select_top_pos_neg(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
     return pd.concat([pos.head(n_pos), neg.head(n_neg)], ignore_index=True)
 
 
-# ─── Plotting: horizontal bar chart ──────────────────────────────────────────
-
-def plot_top_coessential(
-    df: pd.DataFrame,
-    gene: str,
-    top_n: int = 30,
-    output_prefix: str = "coessentiality_barplot",
-):
+def plot_top_coessential(df, gene, top_n=30, output_prefix="coessentiality_barplot"):
     if len(df) < 1:
-        print("[warn] No results to plot for bar chart")
         return
     top = _select_top_pos_neg(df, top_n).sort_values("correlation")
-
     fig_h = max(5, len(top) * 0.28 + 1.5)
     fig, ax = plt.subplots(figsize=(9, fig_h))
-
     colors = ["#d62728" if r > 0 else "#1f77b4" for r in top["correlation"]]
-    ax.barh(range(len(top)), top["correlation"], color=colors,
-            edgecolor="black", linewidth=0.4)
+    ax.barh(range(len(top)), top["correlation"], color=colors, edgecolor="black", linewidth=0.4)
     ax.set_yticks(range(len(top)))
     ax.set_yticklabels(top["gene_symbol"], fontsize=9)
-    ax.set_xlabel("Correlation coefficient (dependency scores)")
+    ax.set_xlabel("Correlation coefficient (CRISPR gene effect)")
     ax.set_title(f"Top {len(top)} genes co-essential with {gene} (DepMap)")
     ax.axvline(0, color="black", linewidth=0.8)
     ax.grid(axis="x", alpha=0.3, linestyle="--")
-
     save_fig(fig, f"{output_prefix}.png")
     save_fig(fig, f"{output_prefix}.pdf", close=False)
     plt.close(fig)
 
 
-# ─── Plotting: network ───────────────────────────────────────────────────────
-
-def plot_network(
-    df: pd.DataFrame,
-    gene: str,
-    top_n: int = 30,
-    output_prefix: str = "coessentiality_network",
-):
+def plot_network(df, gene, top_n=30, output_prefix="coessentiality_network"):
     if len(df) < 2:
-        print("[warn] Too few results for network plot")
         return
     top = _select_top_pos_neg(df, top_n).copy()
-
     np.random.seed(42)
-    n = len(top)
     gene_list = list(top["gene_symbol"])
     positions = {g: np.random.randn(2) for g in gene_list}
-
-    # Simple spring layout
     for _ in range(15):
         forces = {g: np.zeros(2) for g in gene_list}
         for i, g1 in enumerate(gene_list):
             for j, g2 in enumerate(gene_list):
-                if i >= j:
-                    continue
+                if i >= j: continue
                 d = positions[g2] - positions[g1]
                 dist = np.linalg.norm(d) + 0.1
                 forces[g1] -= d / (dist ** 2)
                 forces[g2] += d / (dist ** 2)
         for g in positions:
             positions[g] += 0.01 * forces[g]
-
     all_pos = np.array([positions[g] for g in gene_list])
     span = all_pos.max(axis=0) - all_pos.min(axis=0) + 0.1
     all_pos = (all_pos - all_pos.min(axis=0)) / span
     for i, g in enumerate(gene_list):
         positions[g] = all_pos[i]
-
     corr_vals = dict(zip(top["gene_symbol"], top["correlation"]))
     edges = []
     for i, g1 in enumerate(gene_list):
         for j, g2 in enumerate(gene_list):
-            if i >= j:
-                continue
-            diff = abs(corr_vals[g1] - corr_vals[g2])
-            if diff < 0.3:
-                edges.append((g1, g2, 1 - diff))
-
+            if i >= j: continue
+            if abs(corr_vals[g1] - corr_vals[g2]) < 0.3:
+                edges.append((g1, g2, 1 - abs(corr_vals[g1] - corr_vals[g2])))
     fig, ax = plt.subplots(figsize=(11, 9))
-
     for g1, g2, w in edges:
-        xs = [positions[g1][0], positions[g2][0]]
-        ys = [positions[g1][1], positions[g2][1]]
-        ax.plot(xs, ys, "gray", alpha=0.25, linewidth=w * 1.5, zorder=1)
-
-    # Query gene at center
+        ax.plot([positions[g1][0], positions[g2][0]],
+                [positions[g1][1], positions[g2][1]],
+                "gray", alpha=0.25, linewidth=w * 1.5, zorder=1)
     center = np.array([0.5, 0.5])
     ax.scatter(*center, s=600, c="#FFD700", edgecolors="black", linewidth=1.5, zorder=4)
     ax.text(*center, gene, ha="center", va="center", fontsize=9, fontweight="bold", zorder=5)
-
     for g in gene_list:
         r = corr_vals[g]
         pos = positions[g]
         color = "#d62728" if r > 0 else "#1f77b4"
-        size = abs(r) * 400 + 50
-        alpha = min(0.95, abs(r) + 0.4)
-        ax.scatter(pos[0], pos[1], s=size, c=color, alpha=alpha,
-                   edgecolors="black", linewidth=0.8, zorder=2)
-        ax.text(pos[0], pos[1] + 0.025, g, ha="center", va="bottom",
-                fontsize=7, fontweight="bold", zorder=3)
-
-    for g in gene_list:
-        r = corr_vals[g]
-        pos = positions[g]
-        lw = abs(r) * 2.5
-        color = "#d62728" if r > 0 else "#1f77b4"
+        ax.scatter(pos[0], pos[1], s=abs(r) * 400 + 50, c=color,
+                   alpha=min(0.95, abs(r) + 0.4), edgecolors="black", linewidth=0.8, zorder=2)
+        ax.text(pos[0], pos[1] + 0.025, g, ha="center", va="bottom", fontsize=7, fontweight="bold", zorder=3)
         ax.plot([center[0], pos[0]], [center[1], pos[1]],
-                color=color, alpha=0.35, linewidth=lw, zorder=0)
-
-    ax.set_xlim(-0.1, 1.1)
-    ax.set_ylim(-0.1, 1.1)
-    ax.set_title(f"Co-essentiality network: {gene} (DepMap CRISPR, top {n})")
+                color=color, alpha=0.35, linewidth=abs(r) * 2.5, zorder=0)
+    ax.set_xlim(-0.1, 1.1); ax.set_ylim(-0.1, 1.1)
+    ax.set_title(f"Co-essentiality network: {gene} (DepMap, top {len(gene_list)})")
     ax.axis("off")
-
     from matplotlib.patches import Patch
     ax.legend(handles=[
         Patch(facecolor="#d62728", label="Positive correlation"),
         Patch(facecolor="#1f77b4", label="Negative correlation"),
         Patch(facecolor="#FFD700", label=f"Query: {gene}"),
     ], loc="upper right", fontsize=9, framealpha=0.9)
-
     save_fig(fig, f"{output_prefix}.png")
     save_fig(fig, f"{output_prefix}.pdf", close=False)
     plt.close(fig)
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════
 def main():
     parser = argparse.ArgumentParser(
         description="DepMap co-essentiality analysis for a single gene. "
-                    "Correlates CRISPR dependency scores across cell lines."
+                    "Streams data from DepMap API — no full dataset download needed."
     )
     parser.add_argument("--gene", required=True, help="Gene symbol (e.g. TP53)")
-    parser.add_argument("--essentiality-file", required=True,
-                        help="DepMap CRISPR gene effect CSV (genes as columns, cell lines as rows)")
-    parser.add_argument("--metadata-file", default=None,
-                        help="(optional) DepMap Model.csv for cell line annotations")
     parser.add_argument("--method", choices=["pearson", "spearman"],
                         default="pearson", help="Correlation method (default: pearson)")
-    parser.add_argument("--top-n", type=int, default=30,
-                        help="Number of top co-essential genes to plot (default: 30)")
-    parser.add_argument("--fdr-cutoff", type=float, default=0.01,
-                        help="FDR threshold for significance (default: 0.01)")
-    parser.add_argument("--min-corr", type=float, default=0.2,
-                        help="Minimum |correlation| for significant genes (default: 0.2)")
-    parser.add_argument("--network-top-n", type=int, default=30,
-                        help="Top N genes for network visualization (default: 30)")
+    parser.add_argument("--top-n", type=int, default=30)
+    parser.add_argument("--fdr-cutoff", type=float, default=0.01)
+    parser.add_argument("--min-corr", type=float, default=0.2)
+    parser.add_argument("--network-top-n", type=int, default=30)
     parser.add_argument("--outdir", default=".", help="Output directory")
-    parser.add_argument("--font-family", default=None, help="Font family override")
-    parser.add_argument("--font-size", type=float, default=None, help="Base font size")
+    parser.add_argument("--font-family", default=None)
+    parser.add_argument("--font-size", type=float, default=None)
+    # Legacy flags — accepted but IGNORED
+    parser.add_argument("--essentiality-file", help=argparse.SUPPRESS)
+    parser.add_argument("--metadata-file", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     init_style(font_family=args.font_family, font_size=args.font_size)
-
     os.makedirs(args.outdir, exist_ok=True)
-    gene = normalize_gene_symbol(args.gene)
+    gene = re.sub(r"\s+", "", args.gene.strip()).upper()
 
-    # Load essentiality matrix
-    print(f"[INFO] Loading essentiality matrix: {args.essentiality_file}")
-    dep = pd.read_csv(args.essentiality_file, low_memory=False, index_col=0)
-    # Drop non-numeric columns (metadata like SequencingID, ModelID, etc.)
-    num_cols = dep.select_dtypes(include=[np.number]).columns
-    dropped = len(dep.columns) - len(num_cols)
-    if dropped > 0:
-        print(f"[INFO] Dropped {dropped} non-numeric metadata columns")
-        dep = dep[num_cols]
-    print(f"[INFO] Matrix: {dep.shape[0]} cell lines × {dep.shape[1]} genes")
+    if args.method == "spearman":
+        print("[WARN] Spearman requires ranking — using Pearson for streaming mode.")
+        method = "pearson"
+    else:
+        method = args.method
 
-    # Compute correlations
-    print(f"[INFO] Computing {args.method} correlations for {gene}…")
-    corr_df = compute_correlations(dep, gene, method=args.method)
+    url = depmap_file_url(ESSENTIALITY_FILE)
+    print(f"[INFO] Streaming co-essentiality for {gene} from DepMap API...")
+    corr_df = streaming_correlations(url, gene, method=method)
 
     if len(corr_df) == 0:
         print(f"[ERROR] No valid correlations computed for {gene}.", file=sys.stderr)
         sys.exit(1)
 
-    # Full table
     full_path = os.path.join(args.outdir, f"{gene}.depmap_coessentiality_full.tsv")
     corr_df.to_csv(full_path, sep="\t", index=False)
-    print(f"Saved: {full_path} ({len(corr_df)} genes)")
 
-    # FDR-filtered
     sig = corr_df[
         (corr_df["fdr"] <= args.fdr_cutoff) &
         (corr_df["correlation"].abs() >= args.min_corr)
     ]
     sig_path = os.path.join(args.outdir, f"{gene}.depmap_coessentiality_sig.tsv")
     sig.to_csv(sig_path, sep="\t", index=False)
-    print(f"Saved: {sig_path} ({len(sig)} significant genes, |r| ≥ {args.min_corr} & FDR ≤ {args.fdr_cutoff})")
 
-    # Bar plot
     plot_top_coessential(
         corr_df, gene, top_n=args.top_n,
         output_prefix=os.path.join(args.outdir, f"{gene}.depmap_coessentiality_barplot"),
     )
-
-    # Network
     plot_network(
         corr_df, gene, top_n=args.network_top_n,
         output_prefix=os.path.join(args.outdir, f"{gene}.depmap_coessentiality_network"),
     )
 
-    # Summary
-    print(f"\n=== DepMap Co-essentiality Summary for {gene} ===")
-    print(f"Total genes correlated : {len(corr_df)}")
-    print(f"Significant (|r|≥{args.min_corr}, FDR≤{args.fdr_cutoff}): {len(sig)}")
+    print(f"\n[RESULTS] === DepMap Co-essentiality: {gene} ===")
+    print(f"[RESULTS] Total genes correlated: {len(corr_df)}")
+    print(f"[RESULTS] Significant (|r|>={args.min_corr}, FDR<={args.fdr_cutoff}): {len(sig)}")
     if len(corr_df) > 0:
-        top = corr_df.iloc[0]
-        print(f"Top co-essential       : {top['gene_symbol']} (r={top['correlation']:.3f}, FDR={top['fdr']:.2e})")
-    print(f"Method                 : {args.method}")
-    print(f"Output dir             : {args.outdir}")
+        for _, row in corr_df.head(5).iterrows():
+            print(f"[RESULTS]   {row['gene_symbol']}: r={row['correlation']:.3f}, FDR={row['fdr']:.2e}")
+    print(f"[RESULTS] === END ===")
+    print(f"[DONE] Results written to: {args.outdir}")
 
 
 if __name__ == "__main__":
