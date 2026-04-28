@@ -1,13 +1,13 @@
 ---
-name: pancancer-gene-report
-description: Generate reusable pan-cancer multi-omic gene reports. Use when Codex is asked to analyze a gene across cancers with TCGA expression and survival, TCGA mutation/copy-number alteration and survival, DepMap cell-line expression/copy-number/mutation, CPTAC protein expression, or to produce figure-backed PDF/CSV reports for genes such as PRNP, NADK, or another HGNC symbol.
+name: pan-cancer-analysis-for-gene
+description: Pan-cancer analysis for a gene across all 33 TCGA cancer types plus DepMap and CPTAC. Use this skill when the user asks for pan-cancer analysis, cross-cancer comparison, multi-cancer gene report, or wants to analyze a gene across ALL cancer types at once. Generates a comprehensive PDF report with expression, survival (KM curves + log-rank), mutation, copy-number, DepMap cell-line data, and CPTAC protein data. Covers TCGA expression + survival, TCGA mutation/CNA survival, DepMap 26Q1 expression/copy-number/mutations, and CPTAC proteomics.
 ---
 
 # Pan-Cancer Gene Report
 
 ## Overview
 
-Use this skill to create a figure-backed pan-cancer report for one human gene. The bundled script generates a PDF and CSV appendix using public TCGA/GDC Hub, cBioPortal, DepMap, and CPTAC/cBioPortal sources.
+Use this skill to create a figure-backed pan-cancer report for one human gene. The script generates a multi-page PDF and CSV appendix using public TCGA/GDC Hub, cBioPortal, DepMap, and CPTAC/cBioPortal sources.
 
 Core outputs:
 
@@ -21,19 +21,18 @@ Core outputs:
 ## Quick Start
 
 1. Resolve the gene's human Ensembl gene ID without version, for example `PRNP -> ENSG00000171867` or `NADK -> ENSG00000008130`.
-2. Run the bundled script from the user's workspace, using the bundled workspace Python when available:
+2. Run the bundled script:
 
 ```bash
-/Users/whe3/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
-  /Users/whe3/.codex/skills/pancancer-gene-report/scripts/generate_pancancer_gene_report.py \
+python scripts/generate_pancancer_gene_report.py \
   --gene NADK \
-  --ensembl ENSG00000008130
+  --ensembl ENSG00000008130 \
+  --outdir ./output
 ```
 
-3. If network access is blocked, rerun with approval. The script fetches public data from TCGA/GDC Hub, DepMap, and cBioPortal.
-4. QA the generated PDF with `pypdf` if available, and inspect the appendix.
+3. The script fetches public data from TCGA/GDC Hub, DepMap, and cBioPortal (network access required).
 
-Default output filenames are created in the current workspace:
+Output files:
 
 - `<gene>_pancancer_clinical_relevance_report_with_depmap.pdf`
 - `<gene>_pancancer_appendix.csv`
@@ -50,6 +49,8 @@ Arguments:
 
 - `--gene`: HGNC symbol, uppercase preferred.
 - `--ensembl`: Ensembl gene ID without version.
+- `--outdir`: Output directory (auto-created if it does not exist).
+- `--keep-data`: Keep downloaded intermediate data files. By default, the script deletes all cached data after the report is built so only the PDF and CSV appendix are delivered. Pass `--keep-data` only when the user explicitly asks for the raw datasets.
 
 The script is intentionally self-contained. Prefer running it rather than rewriting the analysis. Patch it only when the user asks for a changed report structure or additional data source.
 

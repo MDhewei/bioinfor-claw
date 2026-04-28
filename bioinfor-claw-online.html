@@ -760,7 +760,7 @@ const SKILL_TREE_FALLBACK = {
   'gene-list-analysis':{emoji:'📋',desc:'GO enrichment, GSEA, PPI network, TF enrichment',
     skills:['go-analysis-for-gene-list','gsea-for-ranked-gene-list','ppi-network-for-gene-list','transcription-factor-enrichment','gene-list-overlap','function-annotation-for-gene-list','curate-gene-list-by-function']},
   'gene-centered-analysis':{emoji:'🔬',desc:'Expression, dependency, survival, co-expression per gene',
-    skills:['depmap-analysis-for-gene','normal-tissue-expression-by-gene','tcga_expression_for_gene','tcga_survival_for_gene','coexpression-for-gene','mutation-analysis-for-gene','drug-sensitivity-for-gene','cox-survival-analysis']},
+    skills:['depmap-analysis-for-gene','normal-tissue-expression-by-gene','tcga_expression_for_gene','tcga_survival_for_gene','coexpression-for-gene','mutation-analysis-for-gene','drug-sensitivity-for-gene','cox-survival-analysis','pan-cancer-analysis-for-gene']},
   'protein-structure-analysis':{emoji:'🧩',desc:'Protein structure retrieval, alignment, variant mapping',
     skills:['protein-structure-for-gene','protein-structure-visualizer','protein-structure-alignment','protein-sequence-analysis','protein-variant-mapper']},
   'machine-learning-and-deep-learning':{emoji:'🤖',desc:'ML classifiers, clustering, dimensionality reduction',
@@ -4056,6 +4056,11 @@ const SKILL_EXAMPLES = {
     'Which cell lines are most dependent on KRAS according to DepMap?',
     'Find genes co-expressed with TP53 in DepMap cell lines',
     '在细胞系中找 BRCA1 的共表达基因和共依赖基因'
+  ],
+  'gene-centered-analysis/pan-cancer-analysis-for-gene': [
+    'Run pan-cancer analysis for TP53 across all TCGA cancer types',
+    '做一个 PRNP 的泛癌分析报告，包括所有 TCGA 癌种的表达、生存和突变',
+    'Generate a comprehensive pan-cancer report for BRCA1 with TCGA, DepMap, and CPTAC data'
   ],
   'gene-centered-analysis/drug-sensitivity-for-gene': [
     '分析 BRCA1 表达与 PARP 抑制剂敏感性的相关性',

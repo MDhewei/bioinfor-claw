@@ -974,46 +974,57 @@ def build_report() -> None:
     doc.build(story)
 
     # ── Print key results to stdout for agent consumption ──
-    print(f"\n[RESULTS] Pan-cancer report for {GENE_SYMBOL} ({GENE_ENSEMBL})")
-    print(f"[RESULTS] TCGA projects analyzed: {len(km_results)} / {len(TCGA_PROJECTS)} | Failed: {len(failed)}")
+    # Keep this compact: the agent copies these lines into its summary.
+    # Detailed per-project data is in the PDF and appendix CSV.
+    lines = []
+    lines.append(f"[RESULTS] === Pan-cancer report: {GENE_SYMBOL} ({GENE_ENSEMBL}) ===")
+    lines.append(f"[RESULTS] TCGA projects analyzed: {len(km_results)} / {len(TCGA_PROJECTS)}")
 
-    # Top expression-survival hits
+    # Expression-survival
     if km_results:
         sorted_km = sorted(km_results.values(), key=lambda r: r.p_value)
         sig_count = sum(1 for r in sorted_km if r.p_value < 0.05)
-        print(f"[RESULTS] Expression-survival: {sig_count} projects with p < 0.05 (uncorrected)")
-        for r in sorted_km[:5]:
-            p_str = f"p = {r.p_value:.2e}" if r.p_value >= 0.0001 else "p < 0.0001"
-            sig = "SIGNIFICANT" if r.p_value < 0.05 else "ns"
-            print(f"[RESULTS]   {r.cancer}: {p_str} ({sig}), n={r.n}, {r.direction}")
+        top3 = sorted_km[:3]
+        top3_str = "; ".join(f"{r.cancer} p={r.p_value:.2e} {r.direction}" for r in top3)
+        lines.append(f"[RESULTS] Expression-survival: {sig_count} projects with p<0.05 | Top hits: {top3_str}")
 
-    # Top alteration-survival hits
+    # Alteration-survival
     if len(alteration_df):
-        alt_sig = alteration_df[alteration_df["logrank_p"] < 0.05]
-        print(f"[RESULTS] Alteration-survival (cBioPortal): {len(alt_sig)} significant tests out of {len(alteration_df)}")
-        for _, row in alteration_df.nsmallest(5, "logrank_p").iterrows():
-            p_str = f"p = {row['logrank_p']:.2e}" if row["logrank_p"] >= 0.0001 else "p < 0.0001"
-            sig = "SIGNIFICANT" if row["logrank_p"] < 0.05 else "ns"
-            print(f"[RESULTS]   {row['project']}:{row['alteration']}: {p_str} ({sig}), {row['direction']}")
+        alt_valid = alteration_df[alteration_df["logrank_p"].notna()]
+        alt_sig = alt_valid[alt_valid["logrank_p"] < 0.05]
+        lines.append(f"[RESULTS] Alteration-survival: {len(alt_sig)} significant out of {len(alt_valid)} tests (mutation/CNA from cBioPortal)")
+        if len(alt_sig):
+            top3_alt = alt_valid.nsmallest(3, "logrank_p")
+            top3_alt_str = "; ".join(f"{r['project']}:{r['alteration']} p={r['logrank_p']:.2e}" for _, r in top3_alt.iterrows())
+            lines.append(f"[RESULTS]   Top alteration hits: {top3_alt_str}")
+    else:
+        lines.append(f"[RESULTS] Alteration-survival: no cBioPortal data retrieved")
 
-    # DepMap summary
-    if dep["expr"].notna().any():
+    # DepMap
+    dep_expr_n = dep["expr"].notna().sum()
+    dep_mut_n = dep_mut["ModelID"].nunique() if len(dep_mut) else 0
+    dep_mut_total = len(dep_mut)
+    if dep_expr_n:
         top_lin = dep.groupby("Lineage")["expr"].median().nlargest(3)
-        print(f"[RESULTS] DepMap: {dep['expr'].notna().sum()} models with expression data")
-        for lin, med in top_lin.items():
-            print(f"[RESULTS]   Top lineage: {lin} (median TPM log = {med:.2f})")
-    if len(dep_mut):
-        print(f"[RESULTS] DepMap mutations: {len(dep_mut)} mutations in {dep_mut['ModelID'].nunique()} models")
+        top_lin_str = ", ".join(f"{lin} ({med:.1f})" for lin, med in top_lin.items())
+        lines.append(f"[RESULTS] DepMap: {dep_expr_n} models with expression | {dep_mut_total} mutations in {dep_mut_n} models | Top lineages: {top_lin_str}")
+    else:
+        lines.append(f"[RESULTS] DepMap: no expression data found")
 
-    # CPTAC summary
+    # CPTAC
     if len(protein_df):
         n_studies = protein_df["study"].nunique()
         n_samples = protein_df["protein"].notna().sum()
-        print(f"[RESULTS] CPTAC protein data: {n_samples} samples across {n_studies} studies")
+        lines.append(f"[RESULTS] CPTAC protein: {n_samples} samples across {n_studies} studies")
+    else:
+        lines.append(f"[RESULTS] CPTAC protein: no data retrieved")
 
     if failed:
-        print(f"[RESULTS] Skipped TCGA projects: {', '.join(p for p, _ in failed)}")
+        lines.append(f"[RESULTS] Skipped projects ({len(failed)}): {', '.join(p for p, _ in failed)}")
 
+    lines.append(f"[RESULTS] === END ===")
+
+    print("\n".join(lines))
     print(f"[DONE] PDF: {PDF_OUT}")
     print(f"[DONE] Appendix: {APPENDIX_OUT}")
 
@@ -1023,6 +1034,13 @@ if __name__ == "__main__":
     parser.add_argument("--gene", default="PRNP", help="HGNC gene symbol, e.g. PRNP or NADK")
     parser.add_argument("--ensembl", default="ENSG00000171867", help="Human Ensembl gene ID without version")
     parser.add_argument("--outdir", default=None, help="Output directory (default: current directory)")
+    parser.add_argument("--keep-data", action="store_true", default=False,
+                        help="Keep downloaded intermediate data files (default: delete after report is built)")
     args = parser.parse_args()
     configure(args.gene, args.ensembl, args.outdir)
     build_report()
+    if not args.keep_data:
+        import shutil
+        if DATA_DIR.exists():
+            shutil.rmtree(DATA_DIR, ignore_errors=True)
+            print(f"[INFO] Cleaned up intermediate data: {DATA_DIR}")
