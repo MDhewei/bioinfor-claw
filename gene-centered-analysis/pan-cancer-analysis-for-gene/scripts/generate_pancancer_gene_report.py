@@ -78,26 +78,44 @@ def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def gzip_lines(url: str):
-    with urlopen(url, timeout=120) as response:
-        with gzip.GzipFile(fileobj=response) as handle:
-            for raw in handle:
-                yield raw.decode("utf-8").rstrip("\n")
-
-
 def get_gene_expression_tcga(project: str) -> pd.DataFrame:
+    """Stream a TCGA star_counts.tsv.gz file, extract ONE gene row, close immediately.
+
+    Uses chunked zlib decompression with explicit connection management to
+    avoid holding large HTTP buffers in memory.  Breaks and closes the
+    connection as soon as the target gene row is found.
+    """
+    import zlib
+
     cache = DATA_DIR / f"TCGA_{project}_{GENE_SYMBOL}_expression.csv"
     if cache.exists():
         return pd.read_csv(cache)
     url = f"{GDC_HUB}/TCGA-{project}.star_counts.tsv.gz"
-    iterator = gzip_lines(url)
-    header = next(iterator).split("\t")
+    header = None
     gene_row = None
-    for line in iterator:
-        if line.startswith(GENE_ENSEMBL):
-            gene_row = line.split("\t")
-            break
-    if gene_row is None:
+    response = urlopen(url, timeout=120)
+    try:
+        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        buf = b""
+        while True:
+            chunk = response.read(32768)  # 32KB chunks — keep memory low
+            if not chunk:
+                break
+            buf += decompressor.decompress(chunk)
+            while b"\n" in buf:
+                line_bytes, buf = buf.split(b"\n", 1)
+                line = line_bytes.decode("utf-8", errors="replace").rstrip("\r")
+                if header is None:
+                    header = line.split("\t")
+                elif line.startswith(GENE_ENSEMBL):
+                    gene_row = line.split("\t")
+                    break
+            if gene_row is not None:
+                break
+    finally:
+        response.close()  # Always close HTTP connection immediately
+
+    if gene_row is None or header is None:
         raise RuntimeError(f"{GENE_SYMBOL} row not found for {project}")
     rows = []
     for sample, value in zip(header[1:], gene_row[1:]):
@@ -116,19 +134,27 @@ def get_survival_tcga(project: str) -> pd.DataFrame:
         return pd.read_csv(cache)
     url = f"{GDC_HUB}/TCGA-{project}.survival.tsv.gz"
     rows = []
-    reader = csv.DictReader(gzip_lines(url), delimiter="\t")
-    for row in reader:
-        try:
-            rows.append(
-                {
-                    "sample": row["sample"],
-                    "patient": row.get("_PATIENT", row["sample"][:12]),
-                    "os_time": float(row["OS.time"]),
-                    "os_event": int(float(row["OS"])),
-                }
+    response = urlopen(url, timeout=120)
+    try:
+        with gzip.GzipFile(fileobj=response) as handle:
+            reader = csv.DictReader(
+                (raw.decode("utf-8").rstrip("\n") for raw in handle),
+                delimiter="\t",
             )
-        except (KeyError, ValueError):
-            continue
+            for row in reader:
+                try:
+                    rows.append(
+                        {
+                            "sample": row["sample"],
+                            "patient": row.get("_PATIENT", row["sample"][:12]),
+                            "os_time": float(row["OS.time"]),
+                            "os_event": int(float(row["OS"])),
+                        }
+                    )
+                except (KeyError, ValueError):
+                    continue
+    finally:
+        response.close()
     df = pd.DataFrame(rows)
     df.to_csv(cache, index=False)
     return df
@@ -409,11 +435,19 @@ def depmap_file_url(filename: str) -> str:
 
 
 def stream_csv_url(url: str):
-    with urlopen(url, timeout=180) as response:
+    """Stream CSV rows from a URL with explicit connection cleanup."""
+    response = urlopen(url, timeout=300)
+    try:
         text = io.TextIOWrapper(response, encoding="utf-8", newline="")
         reader = csv.reader(text)
         for row in reader:
             yield row
+    finally:
+        try:
+            text.detach()  # detach without closing underlying stream
+        except Exception:
+            pass
+        response.close()
 
 
 def depmap_model_metadata() -> pd.DataFrame:
@@ -700,8 +734,23 @@ def add_table(story, rows, widths=None, font_size=7):
     story.append(table)
 
 
+def _mem_mb() -> str:
+    """Return current RSS in MB (Linux/macOS)."""
+    try:
+        import resource
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # macOS reports bytes, Linux reports KB
+        import platform
+        if platform.system() == "Darwin":
+            return f"{rss / 1024 / 1024:.0f}MB"
+        return f"{rss / 1024:.0f}MB"
+    except Exception:
+        return "?"
+
+
 def build_report() -> None:
     ensure_dirs()
+    print(f"[MEM] Start: {_mem_mb()}", flush=True)
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=8, leading=10))
     styles.add(ParagraphStyle(name="Caption", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#5f6872")))
@@ -720,7 +769,7 @@ def build_report() -> None:
     except Exception:
         entrez_id = None
     for project in TCGA_PROJECTS:
-        print(f"TCGA {project}")
+        print(f"TCGA {project} [{_mem_mb()}]", flush=True)
         try:
             df, result = analyze_tcga_project(project)
             if result.n >= 20:
@@ -758,6 +807,7 @@ def build_report() -> None:
                         print(f"  cBioPortal {project}: {exc}")
             del df  # Release THIS project's DataFrame immediately
         except Exception as exc:
+            print(f"  FAILED {project}: {type(exc).__name__}: {exc}", flush=True)
             failed.append((project, str(exc)))
         gc.collect()
 
@@ -768,6 +818,7 @@ def build_report() -> None:
     gc.collect()
 
     # ── Phase 3: DepMap (gene-specific streaming, low memory) ──
+    print(f"[MEM] After TCGA: {_mem_mb()}", flush=True)
     try:
         print("DepMap metadata")
         meta = depmap_model_metadata()
