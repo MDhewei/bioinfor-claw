@@ -1,2 +1,0 @@
-query_gene	expression_max	expression_median	expression_detected_fraction_gt1	mutation_rows	copy_number_max	copy_number_min	copy_number_amplified_fraction	copy_number_deleted_fraction	essentiality_min	essentiality_median	essential_fraction_lt_threshold	top_coexpressed_gene	top_coexpressed_corr	top_coessential_gene	top_coessential_corr
-TP53	8.101655	5.3786607	0.9853521126760564	2138	3.2998032347217143	1.7105598340351362e-06	0.392226148409894	0.0	-0.9244167640896424	0.2384319609888203	0.0041390728476821195	PRPF8	0.3585897087754061	ERVV-2	0.8435566852898434

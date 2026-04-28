@@ -1,6 +1,6 @@
 ---
 name: depmap-analysis-for-gene
-description: "DepMap analysis for a gene across CANCER CELL LINES (NOT patient samples). Modules: expression, mutation, copy number, essentiality. Also includes standalone co-expression (depmap_coexpression.py) and co-essentiality (depmap_coessentiality.py) scripts for cell-line correlations. For patient/tumor co-expression use coexpression-for-gene (TCGA/GTEx) instead."
+description: "DepMap analysis for a gene across CANCER CELL LINES (NOT patient samples). Modules: expression, mutation, copy number, essentiality. Data is streamed directly from the DepMap API — no full dataset download needed. Also includes standalone co-expression (depmap_coexpression.py) and co-essentiality (depmap_coessentiality.py) scripts for cell-line correlations. For patient/tumor co-expression use coexpression-for-gene (TCGA/GTEx) instead."
 ---
 
 # DepMap Analysis for Gene
@@ -9,104 +9,66 @@ description: "DepMap analysis for a gene across CANCER CELL LINES (NOT patient s
 
 Analyze a **single gene** in DepMap across cancer cell lines.
 
-Supported modules:
+The main script streams data directly from the DepMap download API and extracts ONLY the target gene's column. It never downloads or loads multi-GB whole-genome matrices into memory.
+
+Supported modules (main script):
 - expression
 - mutation
 - copy_number
 - essentiality
-- coexpression
-- coessentiality
 
-Default behavior:
-- run **full** analysis
-
-Optional behavior:
-- run only the modules requested by the user
-
-## Reuse policy
-
-This skill is designed for:
-- full DepMap gene profiling
-- targeted module-specific analysis
-- downstream agent workflows that need structured DepMap outputs
-
-If required data files are missing, this skill may call:
-- `depmap-download-data`
-
-to download only the required datasets.
-
-## Module-to-data mapping
-
-- `expression` → expression + metadata
-- `mutation` → mutations + metadata
-- `copy_number` → copy number + metadata
-- `essentiality` → essentiality + metadata
-- `coexpression` → expression + metadata
-- `coessentiality` → essentiality + metadata
-- `full` → expression + mutations + copy number + essentiality + metadata
+Co-expression and co-essentiality require full matrices and use **standalone scripts** (see below).
 
 ## Inputs
 
 ### Required
-- `--gene`
-- `--outdir`
+- `--gene`: Gene symbol, e.g. TP53
+- `--outdir`: Output directory
 
 ### Module selection
-- `--modules`
-
-Supported values:
-- `expression`
-- `mutation`
-- `copy_number`
-- `essentiality`
-- `coexpression`
-- `coessentiality`
-- `full`
-
-Format:
-- comma-separated list
+- `--modules`: Comma-separated list. Choices: expression, mutation, copy_number, essentiality, full. Default: full.
 
 Examples:
 - `--modules expression`
 - `--modules mutation,copy_number`
-- `--modules essentiality,coessentiality`
 - `--modules full`
 
-Default:
-- `full`
-
-### Data files
-**DO NOT include data file paths in your EXEC_ARGS.** The server automatically
-locates cached DepMap data files and injects them into the command. If you
-specify a path, it will likely be wrong (user's local path ≠ server path).
-
-The server auto-wires these flags when needed:
-- `--expression-file`
-- `--mutation-file`
-- `--copy-number-file`
-- `--essentiality-file`
-- `--metadata-file`
-
 ### Analysis options
-- `--top-n`  
-  Default: `20`
+- `--top-n`: Top rows to report (default: 20)
+- `--amp-threshold`: Copy number amplification threshold (default: 1.0)
+- `--del-threshold`: Copy number deletion threshold (default: -1.0)
+- `--essential-threshold`: Essentiality cutoff (default: -0.5)
 
-- `--corr-method`  
-  Choices: `pearson`, `spearman`  
-  Default: `pearson`
+### IMPORTANT: No data file arguments needed
 
-- `--amp-threshold`  
-  Default: `1.0`
+The script streams directly from DepMap URLs. Do NOT pass `--expression-file`, `--mutation-file`, `--copy-number-file`, `--essentiality-file`, or `--metadata-file`. These legacy flags are accepted but ignored.
 
-- `--del-threshold`  
-  Default: `-1.0`
+Do NOT call `depmap-download-data` or `depmap_downloader.py` before running this script. The script handles its own data fetching.
 
-- `--essential-threshold`  
-  Default: `-0.5`
+## Command template
+
+```bash
+python scripts/depmap_analysis_for_gene.py --gene <GENE> --modules <MODULES> --outdir <OUTDIR> [--top-n N] [--amp-threshold X] [--del-threshold X] [--essential-threshold X]
+```
+
+### Example commands
+
+Expression only:
+```bash
+python scripts/depmap_analysis_for_gene.py --gene TP53 --modules expression --outdir <OUTDIR>
+```
+
+Mutation + copy number:
+```bash
+python scripts/depmap_analysis_for_gene.py --gene BRCA1 --modules mutation,copy_number --outdir <OUTDIR>
+```
+
+Full analysis:
+```bash
+python scripts/depmap_analysis_for_gene.py --gene KRAS --modules full --outdir <OUTDIR>
+```
 
 ## Parameter decision guide
-
-Choose modules and parameters based on the biological question:
 
 | Signal in user request | Parameter to set |
 |---|---|
@@ -114,33 +76,10 @@ Choose modules and parameters based on the biological question:
 | "mutation landscape" | `--modules mutation` |
 | "copy number / amplification / deletion" | `--modules copy_number` |
 | "essential? dependency? CRISPR screen?" | `--modules essentiality` |
-| "what genes are co-expressed with X?" | **MUST use standalone script** `depmap_coexpression.py` (produces barplot + network + FDR table). Do NOT use `--modules coexpression` in the main script — it produces only a basic TSV with no plots. |
-| "what genes are co-essential with X?" | **MUST use standalone script** `depmap_coessentiality.py` (produces barplot + network + FDR table). Do NOT use `--modules coessentiality` in the main script — it produces only a basic TSV with no plots. |
-| "co-expression in TCGA / patient samples" | **Wrong skill!** Use `coexpression-for-gene` (TCGA patient-level). This skill is DepMap cell lines only. |
-| "full profile" or no specific module mentioned | `--modules full` |
-| "top 10 / top 20 correlated genes" | `--top-n 10` or `--top-n 20` |
-| "Spearman correlation" (non-parametric, safer) | `--corr-method spearman` |
-| "amplification threshold ≠ 1.0" | `--amp-threshold 0.5` (broader) or `--amp-threshold 2.0` (strict) |
-| "deep deletion only" | `--del-threshold -2.0` |
-| "essential genes" (stricter cutoff) | `--essential-threshold -1.0` |
-
-**Module minimisation rule**: Only pass data files for the requested modules. Do not supply all 5 data files unless `full` is requested.
-
-## Agent rules
-
-1. Parse the requested modules from the user request.
-2. Determine the minimum required datasets.
-3. Check whether required file paths are already available.
-4. If required files are missing, invoke `depmap-download-data` to fetch only the missing datasets.
-5. Resolve real file paths from:
-   - user-provided paths
-   - cached local files
-   - manifest generated by `depmap-download-data`
-   - outputs returned by `depmap-download-data`
-6. Run only the requested modules.
-7. Return only relevant outputs.
-
-Do not require all five data files unless `full` is requested.
+| "what genes are co-expressed with X?" | **MUST use standalone script** `depmap_coexpression.py` |
+| "what genes are co-essential with X?" | **MUST use standalone script** `depmap_coessentiality.py` |
+| "co-expression in TCGA / patient samples" | **Wrong skill!** Use `coexpression-for-gene` |
+| "full profile" or no specific module | `--modules full` |
 
 ## Outputs
 
@@ -151,8 +90,7 @@ Do not require all five data files unless `full` is requested.
 ### Expression
 - `<GENE>.expression_top_cell_lines.tsv`
 - `<GENE>.expression_lineage_summary.tsv`
-- `<GENE>.expression_barplot.png`
-- `<GENE>.expression_barplot.pdf`
+- `<GENE>.expression_barplot.png / .pdf`
 
 ### Mutation
 - `<GENE>.mutations.tsv`
@@ -164,138 +102,42 @@ Do not require all five data files unless `full` is requested.
 - `<GENE>.copy_number_top_amplified.tsv`
 - `<GENE>.copy_number_top_deleted.tsv`
 - `<GENE>.copy_number_lineage_summary.tsv`
-- `<GENE>.copy_number_amplified_barplot.png`
-- `<GENE>.copy_number_amplified_barplot.pdf`
-- `<GENE>.copy_number_deleted_barplot.png`
-- `<GENE>.copy_number_deleted_barplot.pdf`
+- `<GENE>.copy_number_amplified_barplot.png / .pdf`
 
 ### Essentiality
 - `<GENE>.essentiality.tsv`
 - `<GENE>.essentiality_top_cell_lines.tsv`
 - `<GENE>.essentiality_lineage_summary.tsv`
-- `<GENE>.essentiality_barplot.png`
-- `<GENE>.essentiality_barplot.pdf`
-
-### Co-expression (standalone script: `depmap_coexpression.py`)
-- `<GENE>.depmap_coexpression_full.tsv` — all correlations with FDR
-- `<GENE>.depmap_coexpression_sig.tsv` — FDR-filtered significant genes
-- `<GENE>.depmap_coexpression_barplot.png / .pdf` — top co-expressed bar chart
-- `<GENE>.depmap_coexpression_network.png / .pdf` — network visualization
-
-### Co-essentiality (standalone script: `depmap_coessentiality.py`)
-- `<GENE>.depmap_coessentiality_full.tsv` — all correlations with FDR
-- `<GENE>.depmap_coessentiality_sig.tsv` — FDR-filtered significant genes
-- `<GENE>.depmap_coessentiality_barplot.png / .pdf` — top co-essential bar chart
-- `<GENE>.depmap_coessentiality_network.png / .pdf` — network visualization
-
-### Legacy co-expression/co-essentiality (via `--modules` in main script)
-- `<GENE>.coexpression.tsv` — top-N only, no FDR, no plots (use standalone scripts above for richer output)
-- `<GENE>.coessentiality.tsv`
-
-## Execution policy
-
-Construct the command dynamically from:
-- requested modules
-- resolved file paths
-- optional analysis parameters
-
-Do not hardcode dataset file paths in the final command unless those paths are already known to exist.
-
-### Command template
-
-`python scripts/depmap_analysis_for_gene.py --gene <GENE> --modules <MODULES> [FILE ARGS] --outdir <OUTDIR> [OPTIONAL ARGS]`
-
-### File arguments by module
-
-- `expression` or `coexpression`
-  - `--expression-file <EXPRESSION_FILE>`
-  - `--metadata-file <METADATA_FILE>`
-
-- `mutation`
-  - `--mutation-file <MUTATION_FILE>`
-  - `--metadata-file <METADATA_FILE>`
-
-- `copy_number`
-  - `--copy-number-file <COPY_NUMBER_FILE>`
-  - `--metadata-file <METADATA_FILE>`
-
-- `essentiality` or `coessentiality`
-  - `--essentiality-file <ESSENTIALITY_FILE>`
-  - `--metadata-file <METADATA_FILE>`
-
-- `full`
-  - include all file arguments
-
-### Path resolution policy
-
-The agent should resolve file paths from one of the following sources:
-1. explicit user-provided file paths
-2. cached local DepMap data
-3. manifest generated by `depmap-download-data`
-4. outputs returned by `depmap-download-data`
-
-The agent should not assume one fixed directory layout unless it is known to be valid in the current environment.
+- `<GENE>.essentiality_barplot.png / .pdf`
 
 ## Standalone co-expression / co-essentiality scripts
 
-These produce richer outputs (barplot, network, FDR table) than the `--modules coexpression/coessentiality` path in the main script. **Prefer these for any user request about co-expressed or co-essential genes.**
+These require the full expression/essentiality matrix and produce richer outputs (barplot, network, FDR table).
 
-### DepMap co-expression (expression across cell lines)
+### DepMap co-expression
 ```bash
 python scripts/depmap_coexpression.py \
     --gene TP53 \
-    --expression-file <EXPRESSION_CSV> \
     --method pearson \
     --top-n 30 \
     --fdr-cutoff 0.05
 ```
 
-### DepMap co-essentiality (CRISPR dependency across cell lines)
+### DepMap co-essentiality
 ```bash
 python scripts/depmap_coessentiality.py \
     --gene TP53 \
-    --essentiality-file <ESSENTIALITY_CSV> \
     --method pearson \
     --top-n 30 \
     --fdr-cutoff 0.05
 ```
 
-## Example command patterns (main script)
-
-### Expression only
-`python scripts/depmap_analysis_for_gene.py --gene <GENE> --modules expression --expression-file <EXPRESSION_FILE> --metadata-file <METADATA_FILE> --outdir <OUTDIR>`
-
-### Mutation + copy number
-`python scripts/depmap_analysis_for_gene.py --gene <GENE> --modules mutation,copy_number --mutation-file <MUTATION_FILE> --copy-number-file <COPY_NUMBER_FILE> --metadata-file <METADATA_FILE> --outdir <OUTDIR>`
-
-### Essentiality + coessentiality
-`python scripts/depmap_analysis_for_gene.py --gene <GENE> --modules essentiality,coessentiality --essentiality-file <ESSENTIALITY_FILE> --metadata-file <METADATA_FILE> --outdir <OUTDIR>`
-
-### Full analysis
-`python scripts/depmap_analysis_for_gene.py --gene <GENE> --modules full --expression-file <EXPRESSION_FILE> --mutation-file <MUTATION_FILE> --copy-number-file <COPY_NUMBER_FILE> --essentiality-file <ESSENTIALITY_FILE> --metadata-file <METADATA_FILE> --outdir <OUTDIR>`
-
-## Output policy
-
-- If the user asks for one module, return only that module’s outputs plus summary files.
-- If the user asks for several modules, return only those modules’ outputs plus summary files.
-- If the user asks for `full`, return all outputs.
-
-Do not generate unrelated files.
+For co-expression/co-essentiality: do NOT include `--expression-file` or `--essentiality-file` in EXEC_ARGS. The server auto-locates cached DepMap data and injects the correct paths.
 
 ## Failure conditions
 
 Fail clearly if:
 - `--gene` is missing
 - `--outdir` is missing
-- requested modules are invalid
-- a required dataset for the selected modules is missing and cannot be downloaded
-- the gene cannot be found in a required dataset
-- output files cannot be written
-
-## Notes
-
-- This skill reflects the current script behavior.
-- Module selection is controlled by `--modules`.
-- Full analysis is the default.
-- Missing required data may be resolved by calling `depmap-download-data`.
-- File paths should be resolved dynamically rather than copied from one static example.
+- the gene cannot be found in a DepMap dataset
+- network access to DepMap API fails
