@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import gzip
 import io
 import json
@@ -695,6 +696,7 @@ def build_report() -> None:
     styles.add(ParagraphStyle(name="Caption", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#5f6872")))
     chart = Chart()
 
+    # ── Phase 1: Gather TCGA data ──
     tcga_frames: dict[str, pd.DataFrame] = {}
     km_results: dict[str, KMResult] = {}
     failed = []
@@ -707,7 +709,21 @@ def build_report() -> None:
                 km_results[project] = result
         except Exception as exc:
             failed.append((project, str(exc)))
+        gc.collect()
 
+    # Pre-compute summary stats we need for charts BEFORE releasing DataFrames
+    tcga_medians = sorted([(p, float(df["expr"].median())) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
+    tcga_counts = sorted([(p, float(len(df))) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
+
+    # ── Phase 2: cBioPortal alteration analysis (needs tcga_frames) ──
+    print("TCGA cBioPortal mutation/CNA")
+    alteration_df = analyze_tcga_alterations(tcga_frames)
+
+    # Release raw TCGA DataFrames — we only need km_results from here on
+    del tcga_frames
+    gc.collect()
+
+    # ── Phase 3: DepMap (gene-specific streaming, low memory) ──
     print("DepMap metadata")
     meta = depmap_model_metadata()
     print("DepMap expression")
@@ -718,11 +734,41 @@ def build_report() -> None:
     dep_mut = depmap_gene_mutations()
     dep = meta.merge(dep_expr, on="ModelID", how="left").merge(dep_cn, on="ModelID", how="left")
     dep["Lineage"] = dep["Lineage"].fillna("Unknown")
-    dep_mut_annot = dep_mut.merge(meta, on="ModelID", how="left") if len(dep_mut) else dep_mut
-    print("TCGA cBioPortal mutation/CNA")
-    alteration_df = analyze_tcga_alterations(tcga_frames)
+    del dep_expr, dep_cn, meta
+    gc.collect()
+    dep_mut_annot = dep_mut.merge(depmap_model_metadata(), on="ModelID", how="left") if len(dep_mut) else dep_mut
+
+    # ── Phase 4: CPTAC protein ──
     print("CPTAC protein")
     protein_df = cptac_protein_data(gene_entrez_id())
+
+    # ── Pre-compute summary stats for [RESULTS] output (before data is released) ──
+    _summary = {
+        "n_km": len(km_results),
+        "n_tcga": len(TCGA_PROJECTS),
+        "n_failed": len(failed),
+    }
+    if km_results:
+        sorted_km = sorted(km_results.values(), key=lambda r: r.p_value)
+        _summary["km_sig"] = sum(1 for r in sorted_km if r.p_value < 0.05)
+        _summary["km_top3"] = "; ".join(f"{r.cancer} p={r.p_value:.2e} {r.direction}" for r in sorted_km[:3])
+    if len(alteration_df):
+        alt_valid = alteration_df[alteration_df["logrank_p"].notna()]
+        alt_sig = alt_valid[alt_valid["logrank_p"] < 0.05]
+        _summary["alt_sig"] = len(alt_sig)
+        _summary["alt_total"] = len(alt_valid)
+        if len(alt_sig):
+            top3_alt = alt_valid.nsmallest(3, "logrank_p")
+            _summary["alt_top3"] = "; ".join(f"{r['project']}:{r['alteration']} p={r['logrank_p']:.2e}" for _, r in top3_alt.iterrows())
+    _summary["dep_expr_n"] = int(dep["expr"].notna().sum())
+    _summary["dep_mut_n"] = int(dep_mut["ModelID"].nunique()) if len(dep_mut) else 0
+    _summary["dep_mut_total"] = len(dep_mut)
+    if dep["expr"].notna().any():
+        top_lin = dep.groupby("Lineage")["expr"].median().nlargest(3)
+        _summary["dep_top_lin"] = ", ".join(f"{lin} ({med:.1f})" for lin, med in top_lin.items())
+    if len(protein_df):
+        _summary["cptac_studies"] = int(protein_df["study"].nunique())
+        _summary["cptac_samples"] = int(protein_df["protein"].notna().sum())
 
     appendix = []
     for project, r in km_results.items():
@@ -775,23 +821,21 @@ def build_report() -> None:
     story.append(Spacer(1, 8))
     rows = [["Claim", "Figure/data support"]]
     rows += [
-        ["Broad patient expression", f"{GENE_SYMBOL} expression row analyzed in {len(tcga_frames)} TCGA projects."],
-        ["Context-dependent survival", f"{sum(1 for r in km_results.values() if r.p_value < 0.05)} TCGA projects reached nominal median-split log-rank p<0.05; directions vary."],
-        ["Broad cell-line expression", f"DepMap expression analyzed for {dep['expr'].notna().sum()} models with lineage metadata."],
+        ["Broad patient expression", f"{GENE_SYMBOL} expression row analyzed in {_summary['n_km']} TCGA projects."],
+        ["Context-dependent survival", f"{_summary.get('km_sig', 0)} TCGA projects reached nominal median-split log-rank p<0.05; directions vary."],
+        ["Broad cell-line expression", f"DepMap expression analyzed for {_summary['dep_expr_n']} models with lineage metadata."],
         ["Copy-number not a clean driver", "DepMap copy-number distribution and expression-copy relationship are shown; interpretation remains exploratory."],
-        ["Mutation burden", f"DepMap {GENE_SYMBOL} mutation table contains {len(dep_mut)} mutation records across {dep_mut['ModelID'].nunique() if len(dep_mut) else 0} unique models."],
-        ["TCGA alteration survival", f"cBioPortal mutation/GISTIC copy-number statuses tested across {alteration_df['project'].nunique() if len(alteration_df) else 0} TCGA PanCancer Atlas projects."],
-        ["CPTAC protein", f"CPTAC/cBioPortal protein abundance retrieved for {protein_df['study'].nunique() if len(protein_df) else 0} studies and {len(protein_df)} samples."],
+        ["Mutation burden", f"DepMap {GENE_SYMBOL} mutation table contains {_summary['dep_mut_total']} mutation records across {_summary['dep_mut_n']} unique models."],
+        ["TCGA alteration survival", f"cBioPortal mutation/GISTIC copy-number statuses tested across {_summary.get('alt_total', 0)} TCGA PanCancer Atlas tests."],
+        ["CPTAC protein", f"CPTAC/cBioPortal protein abundance retrieved for {_summary.get('cptac_studies', 0)} studies and {_summary.get('cptac_samples', 0)} samples."],
     ]
     add_table(story, rows, widths=[2.0 * inch, 5.0 * inch])
 
     story.append(PageBreak())
     story.append(Paragraph(f"TCGA Pan-Cancer {GENE_SYMBOL} Expression", styles["Heading1"]))
-    med_items = sorted([(p, float(df["expr"].median())) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
-    story.append(chart.hbar(f"Median {GENE_SYMBOL} expression by TCGA project", med_items, f"Median {GENE_SYMBOL} expression", max_items=33))
+    story.append(chart.hbar(f"Median {GENE_SYMBOL} expression by TCGA project", tcga_medians, f"Median {GENE_SYMBOL} expression", max_items=33))
     story.append(Spacer(1, 10))
-    n_items = sorted([(p, float(len(df))) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
-    story.append(chart.hbar("TCGA matched expression-survival sample count by project", n_items, "Matched patients", color="#8aa66a", max_items=33))
+    story.append(chart.hbar("TCGA matched expression-survival sample count by project", tcga_counts, "Matched patients", color="#8aa66a", max_items=33))
 
     story.append(PageBreak())
     story.append(Paragraph("TCGA Pan-Cancer Survival Screen", styles["Heading1"]))
@@ -867,6 +911,10 @@ def build_report() -> None:
     else:
         story.append(Paragraph("No TCGA mutation/CNA alteration data were retrieved from cBioPortal for this gene.", styles["BodyText"]))
 
+    # Release alteration data and KM results — already rendered
+    del km_results, tcga_medians, tcga_counts, alteration_df
+    gc.collect()
+
     story.append(PageBreak())
     story.append(Paragraph(f"DepMap {GENE_SYMBOL} Expression Across Cancer Lineages", styles["Heading1"]))
     lineage_counts = dep.groupby("Lineage")["expr"].count().sort_values(ascending=False)
@@ -931,6 +979,10 @@ def build_report() -> None:
     else:
         story.append(Paragraph(f"No {GENE_SYMBOL} mutation records were found in the parsed DepMap 26Q1 somatic mutation table.", styles["BodyText"]))
 
+    # Release DepMap data — already rendered
+    del dep, dep_mut_annot
+    gc.collect()
+
     story.append(PageBreak())
     story.append(Paragraph(f"CPTAC {GENE_SYMBOL} Protein Expression", styles["Heading1"]))
     if len(protein_df):
@@ -955,6 +1007,10 @@ def build_report() -> None:
     else:
         story.append(Paragraph(f"No CPTAC protein_quantification records were retrieved for {GENE_SYMBOL} from the configured public CPTAC cBioPortal studies.", styles["BodyText"]))
 
+    # Release remaining data — all sections rendered
+    del protein_df, dep_mut
+    gc.collect()
+
     story.append(PageBreak())
     story.append(Paragraph("Interpretation", styles["Heading1"]))
     for bullet in [
@@ -974,48 +1030,28 @@ def build_report() -> None:
     doc.build(story)
 
     # ── Print key results to stdout for agent consumption ──
-    # Keep this compact: the agent copies these lines into its summary.
-    # Detailed per-project data is in the PDF and appendix CSV.
+    # Uses pre-computed _summary dict (data has been released for memory)
     lines = []
     lines.append(f"[RESULTS] === Pan-cancer report: {GENE_SYMBOL} ({GENE_ENSEMBL}) ===")
-    lines.append(f"[RESULTS] TCGA projects analyzed: {len(km_results)} / {len(TCGA_PROJECTS)}")
+    lines.append(f"[RESULTS] TCGA projects analyzed: {_summary['n_km']} / {_summary['n_tcga']}")
 
-    # Expression-survival
-    if km_results:
-        sorted_km = sorted(km_results.values(), key=lambda r: r.p_value)
-        sig_count = sum(1 for r in sorted_km if r.p_value < 0.05)
-        top3 = sorted_km[:3]
-        top3_str = "; ".join(f"{r.cancer} p={r.p_value:.2e} {r.direction}" for r in top3)
-        lines.append(f"[RESULTS] Expression-survival: {sig_count} projects with p<0.05 | Top hits: {top3_str}")
+    if "km_sig" in _summary:
+        lines.append(f"[RESULTS] Expression-survival: {_summary['km_sig']} projects with p<0.05 | Top hits: {_summary['km_top3']}")
 
-    # Alteration-survival
-    if len(alteration_df):
-        alt_valid = alteration_df[alteration_df["logrank_p"].notna()]
-        alt_sig = alt_valid[alt_valid["logrank_p"] < 0.05]
-        lines.append(f"[RESULTS] Alteration-survival: {len(alt_sig)} significant out of {len(alt_valid)} tests (mutation/CNA from cBioPortal)")
-        if len(alt_sig):
-            top3_alt = alt_valid.nsmallest(3, "logrank_p")
-            top3_alt_str = "; ".join(f"{r['project']}:{r['alteration']} p={r['logrank_p']:.2e}" for _, r in top3_alt.iterrows())
-            lines.append(f"[RESULTS]   Top alteration hits: {top3_alt_str}")
+    if "alt_sig" in _summary:
+        lines.append(f"[RESULTS] Alteration-survival: {_summary['alt_sig']} significant out of {_summary['alt_total']} tests (mutation/CNA from cBioPortal)")
+        if _summary.get("alt_top3"):
+            lines.append(f"[RESULTS]   Top alteration hits: {_summary['alt_top3']}")
     else:
         lines.append(f"[RESULTS] Alteration-survival: no cBioPortal data retrieved")
 
-    # DepMap
-    dep_expr_n = dep["expr"].notna().sum()
-    dep_mut_n = dep_mut["ModelID"].nunique() if len(dep_mut) else 0
-    dep_mut_total = len(dep_mut)
-    if dep_expr_n:
-        top_lin = dep.groupby("Lineage")["expr"].median().nlargest(3)
-        top_lin_str = ", ".join(f"{lin} ({med:.1f})" for lin, med in top_lin.items())
-        lines.append(f"[RESULTS] DepMap: {dep_expr_n} models with expression | {dep_mut_total} mutations in {dep_mut_n} models | Top lineages: {top_lin_str}")
+    if _summary.get("dep_expr_n"):
+        lines.append(f"[RESULTS] DepMap: {_summary['dep_expr_n']} models with expression | {_summary['dep_mut_total']} mutations in {_summary['dep_mut_n']} models | Top lineages: {_summary.get('dep_top_lin', 'N/A')}")
     else:
         lines.append(f"[RESULTS] DepMap: no expression data found")
 
-    # CPTAC
-    if len(protein_df):
-        n_studies = protein_df["study"].nunique()
-        n_samples = protein_df["protein"].notna().sum()
-        lines.append(f"[RESULTS] CPTAC protein: {n_samples} samples across {n_studies} studies")
+    if "cptac_studies" in _summary:
+        lines.append(f"[RESULTS] CPTAC protein: {_summary['cptac_samples']} samples across {_summary['cptac_studies']} studies")
     else:
         lines.append(f"[RESULTS] CPTAC protein: no data retrieved")
 
