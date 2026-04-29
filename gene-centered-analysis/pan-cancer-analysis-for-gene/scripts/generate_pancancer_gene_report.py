@@ -34,17 +34,26 @@ DEPMAP_INDEX = "https://depmap.org/portal/api/download/files"
 DEPMAP_RELEASE = "DepMap Public 26Q1"
 CBIO_API = "https://www.cbioportal.org/api"
 
-TCGA_PROJECTS = [
+TCGA_PROJECTS_FULL = [
     "ACC", "BLCA", "BRCA", "CESC", "CHOL", "COAD", "DLBC", "ESCA", "GBM",
     "HNSC", "KICH", "KIRC", "KIRP", "LAML", "LGG", "LIHC", "LUAD", "LUSC",
     "MESO", "OV", "PAAD", "PCPG", "PRAD", "READ", "SARC", "SKCM", "STAD",
     "TGCT", "THCA", "THYM", "UCEC", "UCS", "UVM",
 ]
+# Lite mode: 12 highest-enrollment TCGA projects — covers >85% of patients
+TCGA_PROJECTS_LITE = [
+    "BRCA", "KIRC", "LUAD", "LUSC", "HNSC", "THCA", "STAD", "UCEC",
+    "LGG", "PRAD", "COAD", "SKCM",
+]
+TCGA_PROJECTS = TCGA_PROJECTS_FULL  # overridden at runtime if lite mode
 
 CPTAC_STUDIES = [
     "brca_cptac_2020", "luad_cptac_2020", "lusc_cptac_2021", "coad_cptac_2019",
     "ucec_cptac_2020", "gbm_cptac_2021", "paad_cptac_2021",
 ]
+
+# Lite mode flag — set automatically based on available memory or --lite flag
+LITE_MODE = False
 
 
 def configure(gene: str, ensembl: str, outdir: str | None = None) -> None:
@@ -748,9 +757,41 @@ def _mem_mb() -> str:
         return "?"
 
 
+def _available_memory_mb() -> int:
+    """Return available system memory in MB. Falls back to 512 if unknown."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except Exception:
+        pass
+    try:
+        import resource
+        # On Linux, soft limit in bytes
+        soft, _ = resource.getrlimit(resource.RLIMIT_AS)
+        if soft > 0:
+            return soft // (1024 * 1024)
+    except Exception:
+        pass
+    return 512  # assume constrained
+
+
 def build_report() -> None:
+    global TCGA_PROJECTS, LITE_MODE
     ensure_dirs()
-    print(f"[MEM] Start: {_mem_mb()}", flush=True)
+
+    # Auto-detect lite mode based on available memory
+    avail = _available_memory_mb()
+    print(f"[MEM] Start: {_mem_mb()}, available system memory: ~{avail}MB", flush=True)
+    if LITE_MODE or avail < 700:
+        LITE_MODE = True
+        TCGA_PROJECTS = TCGA_PROJECTS_LITE
+        print(f"[MODE] LITE — {len(TCGA_PROJECTS)} TCGA projects, no DepMap mutations, no cBioPortal alterations", flush=True)
+    else:
+        TCGA_PROJECTS = TCGA_PROJECTS_FULL
+        print(f"[MODE] FULL — {len(TCGA_PROJECTS)} TCGA projects", flush=True)
+
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=8, leading=10))
     styles.add(ParagraphStyle(name="Caption", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#5f6872")))
@@ -764,12 +805,22 @@ def build_report() -> None:
     tcga_counts: list[tuple[str, float]] = []
     alteration_rows: list[dict] = []
     failed = []
-    try:
-        entrez_id = gene_entrez_id()
-    except Exception:
-        entrez_id = None
+    entrez_id = None
+    if not LITE_MODE:
+        try:
+            entrez_id = gene_entrez_id()
+        except Exception:
+            entrez_id = None
     for project in TCGA_PROJECTS:
-        print(f"TCGA {project} [{_mem_mb()}]", flush=True)
+        # Bail out if memory is dangerously low (< 100MB available)
+        avail_now = _available_memory_mb()
+        if avail_now < 100:
+            print(f"[WARNING] Only {avail_now}MB available — stopping TCGA loop early to avoid OOM", flush=True)
+            failed.append((project, "skipped: low memory"))
+            for remaining in TCGA_PROJECTS[TCGA_PROJECTS.index(project) + 1:]:
+                failed.append((remaining, "skipped: low memory"))
+            break
+        print(f"TCGA {project} [{_mem_mb()}, avail ~{avail_now}MB]", flush=True)
         try:
             df, result = analyze_tcga_project(project)
             if result.n >= 20:
@@ -777,7 +828,8 @@ def build_report() -> None:
                 tcga_medians.append((project, float(df["expr"].median())))
                 tcga_counts.append((project, float(len(df))))
                 # Compute alteration analysis for THIS project while df is in memory
-                if entrez_id is not None:
+                # (skipped in lite mode — cBioPortal calls use too much memory/time)
+                if entrez_id is not None and not LITE_MODE:
                     try:
                         study = tcga_study_id(project)
                         sample_list = cbio_sample_list_id(study)
@@ -826,8 +878,12 @@ def build_report() -> None:
         dep_expr = depmap_gene_column("OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv").rename(columns={GENE_SYMBOL: "expr"})
         print("DepMap copy number")
         dep_cn = depmap_gene_column("PortalOmicsCNGeneLog2.csv").rename(columns={GENE_SYMBOL: "cn_log2"})
-        print("DepMap mutations")
-        dep_mut = depmap_gene_mutations()
+        if LITE_MODE:
+            print("DepMap mutations SKIPPED (lite mode)")
+            dep_mut = pd.DataFrame()
+        else:
+            print("DepMap mutations")
+            dep_mut = depmap_gene_mutations()
         dep = meta.merge(dep_expr, on="ModelID", how="left").merge(dep_cn, on="ModelID", how="left")
         dep["Lineage"] = dep["Lineage"].fillna("Unknown")
         dep_mut_annot = dep_mut.merge(meta[["ModelID", "CellLineName", "Lineage"]], on="ModelID", how="left") if len(dep_mut) else dep_mut
@@ -839,13 +895,17 @@ def build_report() -> None:
         dep_mut = pd.DataFrame()
         dep_mut_annot = pd.DataFrame()
 
-    # ── Phase 4: CPTAC protein ──
-    try:
-        print("CPTAC protein")
-        protein_df = cptac_protein_data(gene_entrez_id())
-    except Exception as exc:
-        print(f"[WARNING] CPTAC data fetch failed: {exc}")
+    # ── Phase 4: CPTAC protein (skip in lite mode) ──
+    if LITE_MODE:
+        print("CPTAC protein SKIPPED (lite mode)")
         protein_df = pd.DataFrame()
+    else:
+        try:
+            print("CPTAC protein")
+            protein_df = cptac_protein_data(gene_entrez_id())
+        except Exception as exc:
+            print(f"[WARNING] CPTAC data fetch failed: {exc}")
+            protein_df = pd.DataFrame()
 
     # ── Pre-compute summary stats for [RESULTS] output (before data is released) ──
     _summary = {
@@ -954,7 +1014,7 @@ def build_report() -> None:
     story.append(chart.hbar(f"Signed -log10(log-rank p): positive = {GENE_SYMBOL}-high worse", p_items, "Signed -log10 p", color="#b97979", max_items=33))
     story.append(Paragraph("Nominal p-values are not multiple-testing corrected. This plot is a screening view to show context dependence, not clinical validation.", styles["Caption"]))
 
-    top_km = sorted(km_results.values(), key=lambda r: r.p_value)[:8]
+    top_km = sorted(km_results.values(), key=lambda r: r.p_value)[:4 if LITE_MODE else 8]
     for idx, r in enumerate(top_km):
         if idx % 2 == 0:
             story.append(PageBreak())
@@ -1023,7 +1083,7 @@ def build_report() -> None:
     story.append(PageBreak())
     story.append(Paragraph(f"DepMap {GENE_SYMBOL} Expression Across Cancer Lineages", styles["Heading1"]))
     lineage_counts = dep.groupby("Lineage")["expr"].count().sort_values(ascending=False)
-    top_lineages = lineage_counts[lineage_counts >= 10].head(24).index.tolist()
+    top_lineages = lineage_counts[lineage_counts >= 10].head(12 if LITE_MODE else 24).index.tolist()
     story.append(chart.boxplot(
         f"DepMap 26Q1 {GENE_SYMBOL} mRNA expression by lineage, top lineages by model count",
         {lin: dep.loc[dep["Lineage"] == lin, "expr"].dropna().tolist() for lin in top_lineages},
@@ -1036,7 +1096,7 @@ def build_report() -> None:
     story.append(PageBreak())
     story.append(Paragraph(f"DepMap {GENE_SYMBOL} Copy Number", styles["Heading1"]))
     cn_lineages = dep.groupby("Lineage")["cn_log2"].count().sort_values(ascending=False)
-    cn_top = cn_lineages[cn_lineages >= 10].head(24).index.tolist()
+    cn_top = cn_lineages[cn_lineages >= 10].head(12 if LITE_MODE else 24).index.tolist()
     story.append(chart.boxplot(
         f"DepMap 26Q1 {GENE_SYMBOL} gene-level copy-number signal by lineage",
         {lin: dep.loc[dep["Lineage"] == lin, "cn_log2"].dropna().tolist() for lin in cn_top},
@@ -1049,21 +1109,22 @@ def build_report() -> None:
     story.append(chart.hbar(f"Lineages enriched among top 5% {GENE_SYMBOL} copy-number signal models, threshold {high_cn_threshold:.2f}", list(high_cn_counts.items()), "Models", color="#9a8ab8", max_items=20))
     story.append(Paragraph("DepMap copy-number values are shown as portal-provided gene-level log2 copy-number signals. The top-5% panel is a relative high-copy signal screen, not a clinical amplification call.", styles["Caption"]))
 
-    story.append(PageBreak())
-    story.append(Paragraph("DepMap Expression-Copy Number Relationship", styles["Heading1"]))
-    corr_df = dep[["expr", "cn_log2"]].dropna()
-    corr = float(corr_df["expr"].corr(corr_df["cn_log2"])) if len(corr_df) > 2 else float("nan")
-    story.append(chart.scatter(
-        f"{GENE_SYMBOL} mRNA expression vs {GENE_SYMBOL} copy-number signal in DepMap models, Pearson r={corr:.2f}",
-        corr_df["cn_log2"].tolist(),
-        corr_df["expr"].tolist(),
-        f"{GENE_SYMBOL} copy-number signal",
-        f"{GENE_SYMBOL} expression",
-    ))
-    story.append(Paragraph(
-        f"This scatter plot is a model-level screen for copy-number/expression coupling. A weak-to-moderate correlation would support the interpretation that {GENE_SYMBOL} expression is not explained by copy number alone.",
-        styles["Caption"],
-    ))
+    if not LITE_MODE:
+        story.append(PageBreak())
+        story.append(Paragraph("DepMap Expression-Copy Number Relationship", styles["Heading1"]))
+        corr_df = dep[["expr", "cn_log2"]].dropna()
+        corr = float(corr_df["expr"].corr(corr_df["cn_log2"])) if len(corr_df) > 2 else float("nan")
+        story.append(chart.scatter(
+            f"{GENE_SYMBOL} mRNA expression vs {GENE_SYMBOL} copy-number signal in DepMap models, Pearson r={corr:.2f}",
+            corr_df["cn_log2"].tolist(),
+            corr_df["expr"].tolist(),
+            f"{GENE_SYMBOL} copy-number signal",
+            f"{GENE_SYMBOL} expression",
+        ))
+        story.append(Paragraph(
+            f"This scatter plot is a model-level screen for copy-number/expression coupling. A weak-to-moderate correlation would support the interpretation that {GENE_SYMBOL} expression is not explained by copy number alone.",
+            styles["Caption"],
+        ))
 
     story.append(PageBreak())
     story.append(Paragraph(f"DepMap {GENE_SYMBOL} Mutation Landscape", styles["Heading1"]))
@@ -1126,6 +1187,9 @@ def build_report() -> None:
         f"For experimental model selection, prioritize models with high {GENE_SYMBOL} mRNA/protein and matched phenotype assays. Mutation or copy-number filters alone are lower-yield.",
     ]:
         story.append(Paragraph(f"• {bullet}", styles["BodyText"]))
+    if LITE_MODE:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"⚡ This report was generated in <b>lite mode</b> ({len(TCGA_PROJECTS)} TCGA projects) to fit within server memory constraints. DepMap mutations, cBioPortal alteration survival, and CPTAC protein sections are excluded. Run locally with full mode for the complete 33-project analysis.", styles["Small"]))
     if failed:
         story.append(Spacer(1, 8))
         story.append(Paragraph(f"TCGA projects skipped because data retrieval or parsing failed: {failed}", styles["Small"]))
@@ -1206,7 +1270,11 @@ if __name__ == "__main__":
     parser.add_argument("--outdir", default=None, help="Output directory (default: current directory)")
     parser.add_argument("--keep-data", action="store_true", default=False,
                         help="Keep downloaded intermediate data files (default: delete after report is built)")
+    parser.add_argument("--lite", action="store_true", default=False,
+                        help="Lite mode: fewer projects, skip heavy downloads (for low-memory servers)")
     args = parser.parse_args()
+    if args.lite:
+        LITE_MODE = True
     configure(args.gene, args.ensembl, args.outdir)
     build_report()
     if not args.keep_data:
