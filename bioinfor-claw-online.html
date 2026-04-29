@@ -2483,7 +2483,7 @@ function renderExecResult(r){
       h+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--surf);border:1px solid var(--border);border-radius:6px">`;
       h+=`<span>${icon}</span><span style="flex:1;font-size:11.5px;font-weight:500">${esc(f.name)}</span>`;
       h+=`<span style="font-size:10px;color:var(--muted)">${(f.size/1024).toFixed(1)} KB</span>`;
-      h+=`<a href="${fileUrl}" download="${f.name}" style="padding:3px 8px;background:var(--g700);color:#fff;border-radius:5px;font-size:10.5px;text-decoration:none;font-weight:600">⬇ Download</a></div>`;
+      h+=`<button onclick="downloadFileBlob('${fileUrl.replace(/'/g,"\\'")}','${esc(f.name).replace(/'/g,"\\'")}');" style="padding:3px 8px;background:var(--g700);color:#fff;border-radius:5px;font-size:10.5px;border:none;cursor:pointer;font-weight:600">⬇ Download</button></div>`;
       // Inline preview for images
       if(isPng||isSvg){
         h+=`<img src="${fileUrl}" alt="${esc(f.name)}" style="max-width:100%;border-radius:6px;margin-top:4px;border:1px solid var(--border)">`;
@@ -3190,6 +3190,33 @@ function formatFileSize(bytes){
   if(n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
   if(n < 1024*1024*1024) return (n/1024/1024).toFixed(1) + ' MB';
   return (n/1024/1024/1024).toFixed(2) + ' GB';
+}
+
+// Robust file download via fetch → blob URL.
+// Bypasses proxy/encoding issues that can corrupt binary files (PDF, etc.)
+// when downloaded via plain <a href> through reverse proxies like Render/nginx.
+async function downloadFileBlob(url, filename){
+  const btn = event && event.target;
+  const origText = btn ? btn.textContent : '';
+  try {
+    if(btn){ btn.textContent = '⏳…'; btn.style.pointerEvents = 'none'; }
+    const resp = await fetch(url);
+    if(!resp.ok) throw new Error('Server returned ' + resp.status);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    if(btn){ btn.textContent = '✅ Done'; setTimeout(()=>{ btn.textContent = origText; btn.style.pointerEvents = ''; }, 2000); }
+  } catch(e) {
+    console.error('[download]', e);
+    if(btn){ btn.textContent = '❌ Failed'; btn.style.pointerEvents = ''; setTimeout(()=>{ btn.textContent = origText; }, 3000); }
+    alert('Download failed: ' + e.message + '\n\nTry right-click → Save As on the Open link.');
+  }
 }
 
 // Build a system prompt specifically for the agent loop.
@@ -3935,7 +3962,7 @@ function renderFinalAnswer(text, files, errors, trace){
       const fileUrl = state.serverUrl + f.url;
       const prettySize = formatFileSize(f.size);
       const safeName = escapeHtml(f.name);
-      const dlLink = '<a href="'+fileUrl+'" download="'+safeName+'" style="color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;">⬇ Download</a>';
+      const dlLink = '<button onclick="downloadFileBlob(\''+fileUrl.replace(/'/g,"\\'")+'\',\''+safeName.replace(/'/g,"\\'")+'\');" style="color:var(--accent);background:none;border:1px solid var(--border);border-radius:4px;font-size:11px;padding:2px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">⬇ Download</button>';
       const openLink = '<a href="'+fileUrl+'" target="_blank" style="color:var(--text-dim);text-decoration:none;font-size:11px;">Open</a>';
       if(/\.(png|jpg|jpeg|svg|gif|webp)$/i.test(f.name)){
         html += '<div style="margin-bottom:10px;">'

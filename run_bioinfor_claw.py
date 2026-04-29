@@ -4121,6 +4121,11 @@ setInterval(loadStats,30000);
         self.send_header('Content-Type', mime)
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Content-Disposition', disposition)
+        # Prevent reverse-proxy (nginx/Render) from gzip-compressing binary
+        # files, which can corrupt PDFs and other binary downloads.
+        self.send_header('Content-Encoding', 'identity')
+        self.send_header('Cache-Control', 'no-transform')
+        self.send_header('X-Accel-Buffering', 'no')
         self._cors_headers()
         self.end_headers()
         self.wfile.write(data)

@@ -1134,6 +1134,18 @@ def build_report() -> None:
 
     try:
         doc.build(story)
+        # Validate PDF on disk
+        pdf_bytes = PDF_OUT.stat().st_size
+        with open(PDF_OUT, "rb") as _f:
+            _header = _f.read(8)
+            _f.seek(max(0, pdf_bytes - 64))
+            _trailer = _f.read()
+        if not _header.startswith(b"%PDF"):
+            print(f"[WARNING] PDF header invalid: {_header!r}", flush=True)
+        elif b"%%EOF" not in _trailer:
+            print(f"[WARNING] PDF missing %%EOF trailer — file may be truncated ({pdf_bytes} bytes)", flush=True)
+        else:
+            print(f"[PDF] Valid PDF written: {pdf_bytes} bytes, header OK, %%EOF present", flush=True)
     except Exception as exc:
         print(f"[WARNING] PDF generation failed: {exc}", flush=True)
         # Try to produce a minimal PDF with just text summary
