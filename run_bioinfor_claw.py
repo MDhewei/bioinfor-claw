@@ -1117,6 +1117,7 @@ function clearSession() {{
 
 # ── Web + Execution server ──────────────────────────────────────────────────
 import json as _json, subprocess as _subprocess, shutil as _shutil, atexit as _atexit
+import uuid as _uuid, time as _time
 from urllib.parse import urlparse, parse_qs
 
 import requests as _requests
@@ -1347,6 +1348,15 @@ def _track_analysis(ip, skill_key='', gene=''):
     if _analytics['total_analyses'] % 5 == 0:
         _threading.Thread(target=_save_analytics, daemon=True).start()
 
+# ── Async job system for long-running scripts ─────────────────────────────
+# Prevents Render's HTTP proxy timeout from killing pan-cancer and other
+# long-running analyses.  The frontend POSTs run_script as usual; the server
+# detects when a script is expected to run long, launches it in a background
+# thread, and returns a job_id immediately.  The frontend then polls
+# /api/jobs/<id> until the job completes.
+_jobs = {}  # job_id → {status, result, started}
+_jobs_lock = _threading.Lock()
+
 class Handler(BaseHTTPRequestHandler):
     html_content = None
     repo_root    = None
@@ -1459,6 +1469,25 @@ class Handler(BaseHTTPRequestHandler):
                 'uptime_since': _analytics['start_time'],
                 'active_ips_today': visitors_today,
             })
+
+        elif path.startswith('/api/jobs/'):
+            job_id = path[len('/api/jobs/'):].rstrip('/')
+            with _jobs_lock:
+                job = _jobs.get(job_id)
+            if not job:
+                self._send_json({'error': 'job not found'}, 404)
+            elif job['status'] == 'running':
+                self._send_json({'status': 'running',
+                                 'elapsed': round(_time.time() - job['started'], 1)})
+            else:
+                result = job['result']
+                # Clean up old jobs (keep last 10)
+                with _jobs_lock:
+                    if len(_jobs) > 10:
+                        old = sorted(_jobs.keys(), key=lambda k: _jobs[k]['started'])[:-10]
+                        for k in old:
+                            del _jobs[k]
+                self._send_json({'status': 'done', 'result': result})
 
         elif path.startswith('/api/results/'):
             parts = path.split('/')
@@ -1786,16 +1815,54 @@ class Handler(BaseHTTPRequestHandler):
                 'scripts': scripts, 'count': len(scripts)}
 
     # ── Tool: run_script ───────────────────────────────────────────────────
+    # Scripts that are expected to run long (>60s) and should be launched
+    # asynchronously to avoid Render's HTTP proxy timeout killing them.
+    _ASYNC_SCRIPTS = {'generate_pancancer_gene_report.py'}
+
     def _tool_run_script(self, args):
-        """Execute a script with explicit CLI args.
+        """Execute a script.  Long-running scripts (in _ASYNC_SCRIPTS) are
+        launched in a background thread and return {async, job_id} immediately.
+        The frontend polls /api/jobs/<id> for completion.
+        """
+        script_name = (args.get('script') or '').rsplit('/', 1)[-1]
+        if script_name in self._ASYNC_SCRIPTS:
+            job_id = _uuid.uuid4().hex[:10]
+            with _jobs_lock:
+                _jobs[job_id] = {'status': 'running', 'result': None,
+                                 'started': _time.time()}
+            t = _threading.Thread(
+                target=self._tool_run_script_bg, args=(job_id, args),
+                daemon=True)
+            t.start()
+            return {'async': True, 'job_id': job_id,
+                    'message': f'{script_name} is running in background...'}
+
+        return self._tool_run_script_impl(args)
+
+    def _tool_run_script_bg(self, job_id, args):
+        """Background wrapper that stores the result in _jobs."""
+        try:
+            result = self._tool_run_script_impl(args)
+            with _jobs_lock:
+                _jobs[job_id]['status'] = 'done'
+                _jobs[job_id]['result'] = result
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            with _jobs_lock:
+                _jobs[job_id]['status'] = 'done'
+                _jobs[job_id]['result'] = {'success': False, 'error': str(e)}
+
+    def _tool_run_script_impl(self, args):
+        """Core run_script logic (synchronous).
         args: {
           skill_id: 'category/name',
           script:   'scripts/foo.py' or 'foo.py',
-          args:     ['--flag', 'value', ...],       # model-provided flags
+          args:     ['--flag', 'value', ...],
           input_data:   (optional) text to write to a temp file
           input_file:   (optional) path to pre-uploaded file
           input_flag:   (optional) which flag to use for the input file
-          timeout:      (optional) seconds, default 300
+          timeout:      (optional) seconds, default 600
         }
         Returns: {success, run_id, returncode, stdout, stderr, output_files, command, duration}
         """
@@ -2011,7 +2078,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         run_start = _time.time()
-        timeout = int(args.get('timeout') or 300)
+        timeout = int(args.get('timeout') or 600)
 
         print(f"  [tool/run_script] {skill_id} :: {' '.join(cmd[1:])}")
 

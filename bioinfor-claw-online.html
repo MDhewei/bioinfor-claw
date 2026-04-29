@@ -2893,10 +2893,38 @@ async function runTool(name, args, signal){
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(args||{})});
     const d=await r.json();
+    // Handle async jobs (long-running scripts like pan-cancer)
+    if(d.async && d.job_id){
+      console.log('[runTool] async job started:', d.job_id);
+      return await pollJobUntilDone(d.job_id, signal);
+    }
     return d;
   }catch(e){
     if(e.name==='AbortError') return {success:false, aborted:true, error:'Aborted by user'};
     return {success:false, error:'Tool call failed: '+e.message};
+  }
+}
+
+// Poll an async job until it completes.  Returns the final tool result.
+async function pollJobUntilDone(jobId, signal, intervalMs=4000){
+  const jobUrl = state.serverUrl + '/api/jobs/' + jobId;
+  while(true){
+    if(signal && signal.aborted) return {success:false, aborted:true, error:'Aborted by user'};
+    await new Promise(r => setTimeout(r, intervalMs));
+    try{
+      const r = await fetch(jobUrl, {signal});
+      const d = await r.json();
+      if(d.status === 'done'){
+        console.log('[pollJob] job done:', jobId);
+        return d.result || {success:false, error:'Job returned no result'};
+      }
+      // Still running — log elapsed time
+      if(d.elapsed) console.log('[pollJob]', jobId, 'running...', d.elapsed + 's');
+    }catch(e){
+      if(e.name==='AbortError') return {success:false, aborted:true, error:'Aborted by user'};
+      console.warn('[pollJob] fetch error, retrying...', e.message);
+      // Don't fail immediately — the server might just be busy
+    }
   }
 }
 
