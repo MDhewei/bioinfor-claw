@@ -2408,6 +2408,10 @@ async function callOpenAI(sys,msgs,model){
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
     body:JSON.stringify({model,messages:[{role:'system',content:sys},...msgs],max_tokens:8192})});
   const d=await r.json();if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));
+  if(!d.choices || !d.choices[0]){
+    console.error('[callLLM] unexpected response shape:', JSON.stringify(d).slice(0,500));
+    throw new Error('LLM returned an unexpected response. Please try again.');
+  }
   return d.choices[0].message.content;
 }
 
@@ -2558,6 +2562,10 @@ async function callLLMWithTools(sys, msgs, tools, signal){
       tools, tool_choice:'auto', max_tokens:8192})});
   const d=await r.json();
   if(d.error) throw new Error(d.error.message||JSON.stringify(d.error));
+  if(!d.choices || !d.choices[0]){
+    console.error('[callLLM] unexpected response shape:', JSON.stringify(d).slice(0,500));
+    throw new Error('LLM returned an unexpected response. Please try again.');
+  }
   const choice=d.choices[0].message;
   const text=choice.content||'';
   const tool_calls=(choice.tool_calls||[]).map(tc=>{
