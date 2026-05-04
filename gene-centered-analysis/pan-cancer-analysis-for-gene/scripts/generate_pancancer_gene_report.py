@@ -90,13 +90,17 @@ def get_gene_expression_tcga(project: str) -> pd.DataFrame:
     if cache.exists():
         return pd.read_csv(cache)
     url = f"{GDC_HUB}/TCGA-{project}.star_counts.tsv.gz"
-    iterator = gzip_lines(url)
-    header = next(iterator).split("\t")
+    req = Request(url, headers={"User-Agent": "bioinfor-claw/1.0"})
     gene_row = None
-    for line in iterator:
-        if line.startswith(GENE_ENSEMBL):
-            gene_row = line.split("\t")
-            break
+    with urlopen(req, timeout=180) as response:
+        with gzip.GzipFile(fileobj=response) as handle:
+            header = handle.readline().decode("utf-8").rstrip("\n").split("\t")
+            for raw in handle:
+                line = raw.decode("utf-8").rstrip("\n")
+                if line.startswith(GENE_ENSEMBL):
+                    gene_row = line.split("\t")
+                    break
+    # connection is now properly closed by the with-statement
     if gene_row is None:
         raise RuntimeError(f"{GENE_SYMBOL} row not found for {project}")
     rows = []
