@@ -2040,9 +2040,10 @@ class Handler(BaseHTTPRequestHandler):
             for f in skill_dir.rglob('*'):
                 if not f.is_file():
                     continue
-                # Skip files inside .git, __pycache__, scripts/, etc.
+                # Skip files inside .git, __pycache__, scripts/, data dirs, etc.
                 rel_parts = f.relative_to(skill_dir).parts
-                if any(p.startswith('.') or p == '__pycache__' or p == 'scripts' or p == 'cache' for p in rel_parts[:-1]):
+                if any(p.startswith('.') or p == '__pycache__' or p == 'scripts' or p == 'cache'
+                       or p.endswith('_data') or p.endswith('_pancancer_data') for p in rel_parts[:-1]):
                     continue
                 try:
                     mtime = f.stat().st_mtime
@@ -2068,7 +2069,14 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             if input_path and f.name == input_path.name:
                 continue
+            # Skip intermediate data directories (e.g. *_pancancer_data/)
             rel = f.relative_to(out_dir)
+            rel_parts = rel.parts
+            if len(rel_parts) > 1 and any(
+                p.endswith('_data') or p.endswith('_pancancer_data')
+                for p in rel_parts[:-1]
+            ):
+                continue
             ext = f.suffix.lstrip('.').upper()
             output_files.append({
                 'name': str(rel),

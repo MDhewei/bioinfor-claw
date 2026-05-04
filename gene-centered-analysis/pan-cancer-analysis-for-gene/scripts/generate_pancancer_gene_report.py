@@ -78,7 +78,8 @@ def ensure_dirs() -> None:
 
 
 def gzip_lines(url: str):
-    with urlopen(url, timeout=120) as response:
+    req = Request(url, headers={"User-Agent": "bioinfor-claw/1.0"})
+    with urlopen(req, timeout=180) as response:
         with gzip.GzipFile(fileobj=response) as handle:
             for raw in handle:
                 yield raw.decode("utf-8").rstrip("\n")
@@ -115,7 +116,7 @@ def get_survival_tcga(project: str) -> pd.DataFrame:
         return pd.read_csv(cache)
     url = f"{GDC_HUB}/TCGA-{project}.survival.tsv.gz"
     rows = []
-    reader = csv.DictReader(gzip_lines(url), delimiter="\t")
+    reader = csv.DictReader(gzip_lines(url), delimiter="\t")  # gzip_lines now uses User-Agent header
     for row in reader:
         try:
             rows.append(
@@ -393,13 +394,13 @@ def cptac_protein_data(entrez: int) -> pd.DataFrame:
 def depmap_file_url(filename: str) -> str:
     cache = DATA_DIR / "depmap_file_index.csv"
     if not cache.exists():
-        cache.write_bytes(urlopen(DEPMAP_INDEX, timeout=120).read())
+        cache.write_bytes(urlopen(Request(DEPMAP_INDEX, headers={"User-Agent": "bioinfor-claw/1.0"}), timeout=120).read())
     rows = list(csv.DictReader(io.StringIO(cache.read_text())))
     for row in rows:
         if row["release"] == DEPMAP_RELEASE and row["filename"] == filename:
             return row["url"]
     cache.unlink(missing_ok=True)
-    cache.write_bytes(urlopen(DEPMAP_INDEX, timeout=120).read())
+    cache.write_bytes(urlopen(Request(DEPMAP_INDEX, headers={"User-Agent": "bioinfor-claw/1.0"}), timeout=120).read())
     rows = list(csv.DictReader(io.StringIO(cache.read_text())))
     for row in rows:
         if row["release"] == DEPMAP_RELEASE and row["filename"] == filename:
@@ -408,7 +409,8 @@ def depmap_file_url(filename: str) -> str:
 
 
 def stream_csv_url(url: str):
-    with urlopen(url, timeout=180) as response:
+    req = Request(url, headers={"User-Agent": "bioinfor-claw/1.0"})
+    with urlopen(req, timeout=180) as response:
         text = io.TextIOWrapper(response, encoding="utf-8", newline="")
         reader = csv.reader(text)
         for row in reader:
@@ -420,7 +422,7 @@ def depmap_model_metadata() -> pd.DataFrame:
     if cache.exists():
         return pd.read_csv(cache)
     rows = []
-    with urlopen(depmap_file_url("Model.csv"), timeout=120) as response:
+    with urlopen(Request(depmap_file_url("Model.csv"), headers={"User-Agent": "bioinfor-claw/1.0"}), timeout=120) as response:
         text = io.TextIOWrapper(response, encoding="utf-8", newline="")
         for row in csv.DictReader(text):
             rows.append(
@@ -468,7 +470,7 @@ def depmap_gene_mutations() -> pd.DataFrame:
     if cache.exists():
         return pd.read_csv(cache)
     rows = []
-    with urlopen(depmap_file_url("OmicsSomaticMutations.csv"), timeout=180) as response:
+    with urlopen(Request(depmap_file_url("OmicsSomaticMutations.csv"), headers={"User-Agent": "bioinfor-claw/1.0"}), timeout=180) as response:
         text = io.TextIOWrapper(response, encoding="utf-8", newline="")
         for row in csv.DictReader(text):
             if row.get("HugoSymbol") != GENE_SYMBOL:
@@ -699,14 +701,18 @@ def build_report() -> None:
     km_results: dict[str, KMResult] = {}
     failed = []
     for project in TCGA_PROJECTS:
-        print(f"TCGA {project}")
+        print(f"TCGA {project}", flush=True)
         try:
             df, result = analyze_tcga_project(project)
             if result.n >= 20:
                 tcga_frames[project] = df
                 km_results[project] = result
+                print(f"  -> OK n={result.n} p={result.p_value:.3g}", flush=True)
+            else:
+                print(f"  -> skipped (n={result.n} < 20)", flush=True)
         except Exception as exc:
             failed.append((project, str(exc)))
+            print(f"  -> FAILED: {exc}", flush=True)
 
     print("DepMap metadata")
     meta = depmap_model_metadata()
