@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import gc
 import gzip
 import io
 import json
@@ -78,44 +77,26 @@ def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def gzip_lines(url: str):
+    with urlopen(url, timeout=120) as response:
+        with gzip.GzipFile(fileobj=response) as handle:
+            for raw in handle:
+                yield raw.decode("utf-8").rstrip("\n")
+
+
 def get_gene_expression_tcga(project: str) -> pd.DataFrame:
-    """Stream a TCGA star_counts.tsv.gz file, extract ONE gene row, close immediately.
-
-    Uses chunked zlib decompression with explicit connection management to
-    avoid holding large HTTP buffers in memory.  Breaks and closes the
-    connection as soon as the target gene row is found.
-    """
-    import zlib
-
     cache = DATA_DIR / f"TCGA_{project}_{GENE_SYMBOL}_expression.csv"
     if cache.exists():
         return pd.read_csv(cache)
     url = f"{GDC_HUB}/TCGA-{project}.star_counts.tsv.gz"
-    header = None
+    iterator = gzip_lines(url)
+    header = next(iterator).split("\t")
     gene_row = None
-    response = urlopen(url, timeout=120)
-    try:
-        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
-        buf = b""
-        while True:
-            chunk = response.read(32768)  # 32KB chunks — keep memory low
-            if not chunk:
-                break
-            buf += decompressor.decompress(chunk)
-            while b"\n" in buf:
-                line_bytes, buf = buf.split(b"\n", 1)
-                line = line_bytes.decode("utf-8", errors="replace").rstrip("\r")
-                if header is None:
-                    header = line.split("\t")
-                elif line.startswith(GENE_ENSEMBL):
-                    gene_row = line.split("\t")
-                    break
-            if gene_row is not None:
-                break
-    finally:
-        response.close()  # Always close HTTP connection immediately
-
-    if gene_row is None or header is None:
+    for line in iterator:
+        if line.startswith(GENE_ENSEMBL):
+            gene_row = line.split("\t")
+            break
+    if gene_row is None:
         raise RuntimeError(f"{GENE_SYMBOL} row not found for {project}")
     rows = []
     for sample, value in zip(header[1:], gene_row[1:]):
@@ -134,27 +115,19 @@ def get_survival_tcga(project: str) -> pd.DataFrame:
         return pd.read_csv(cache)
     url = f"{GDC_HUB}/TCGA-{project}.survival.tsv.gz"
     rows = []
-    response = urlopen(url, timeout=120)
-    try:
-        with gzip.GzipFile(fileobj=response) as handle:
-            reader = csv.DictReader(
-                (raw.decode("utf-8").rstrip("\n") for raw in handle),
-                delimiter="\t",
+    reader = csv.DictReader(gzip_lines(url), delimiter="\t")
+    for row in reader:
+        try:
+            rows.append(
+                {
+                    "sample": row["sample"],
+                    "patient": row.get("_PATIENT", row["sample"][:12]),
+                    "os_time": float(row["OS.time"]),
+                    "os_event": int(float(row["OS"])),
+                }
             )
-            for row in reader:
-                try:
-                    rows.append(
-                        {
-                            "sample": row["sample"],
-                            "patient": row.get("_PATIENT", row["sample"][:12]),
-                            "os_time": float(row["OS.time"]),
-                            "os_event": int(float(row["OS"])),
-                        }
-                    )
-                except (KeyError, ValueError):
-                    continue
-    finally:
-        response.close()
+        except (KeyError, ValueError):
+            continue
     df = pd.DataFrame(rows)
     df.to_csv(cache, index=False)
     return df
@@ -435,19 +408,11 @@ def depmap_file_url(filename: str) -> str:
 
 
 def stream_csv_url(url: str):
-    """Stream CSV rows from a URL with explicit connection cleanup."""
-    response = urlopen(url, timeout=300)
-    try:
+    with urlopen(url, timeout=180) as response:
         text = io.TextIOWrapper(response, encoding="utf-8", newline="")
         reader = csv.reader(text)
         for row in reader:
             yield row
-    finally:
-        try:
-            text.detach()  # detach without closing underlying stream
-        except Exception:
-            pass
-        response.close()
 
 
 def depmap_model_metadata() -> pd.DataFrame:
@@ -482,10 +447,7 @@ def depmap_gene_column(filename: str, gene_symbol: str | None = None) -> pd.Data
         return pd.read_csv(cache)
     rows_iter = stream_csv_url(depmap_file_url(filename))
     header = next(rows_iter)
-    gene_col = next((i for i, h in enumerate(header) if h.startswith(f"{gene_symbol} ")), None)
-    if gene_col is None:
-        print(f"  Warning: {gene_symbol} not found in {filename} header")
-        return pd.DataFrame(columns=["ModelID", gene_symbol])
+    gene_col = next(i for i, h in enumerate(header) if h.startswith(f"{gene_symbol} "))
     model_col = header.index("ModelID") if "ModelID" in header else 0
     default_col = header.index("IsDefaultEntryForModel") if "IsDefaultEntryForModel" in header else None
     rows = []
@@ -551,8 +513,6 @@ class Chart:
         from reportlab.graphics.shapes import Drawing, Line, Rect, String
 
         items = items[:max_items]
-        if not items:
-            return Paragraph(f"<i>{title}: no data available</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         d = Drawing(self.width, self.height)
         ml, mr, mt, mb = 92, 18, 28, 24
         pw, ph = self.width - ml - mr, self.height - mt - mb
@@ -582,14 +542,10 @@ class Chart:
         from reportlab.graphics.shapes import Drawing, Line, Rect, String
 
         labels = list(data_by_label.keys())
-        if not labels:
-            return Paragraph(f"<i>{title}: no data available</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         d = Drawing(self.width, self.height)
         ml, mr, mt, mb = 48, 12, 30, 50
         pw, ph = self.width - ml - mr, self.height - mt - mb
         all_vals = [v for vals in data_by_label.values() for v in vals if not pd.isna(v)]
-        if not all_vals:
-            return Paragraph(f"<i>{title}: no numeric data</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         ymin, ymax = min(all_vals), max(all_vals)
         pad = (ymax - ymin) * 0.08 or 1
         ymin, ymax = ymin - pad, ymax + pad
@@ -690,8 +646,6 @@ class Chart:
         from reportlab.graphics.shapes import Circle, Drawing, Line, String
 
         paired = [(x, y) for x, y in zip(xvals, yvals) if not pd.isna(x) and not pd.isna(y)]
-        if len(paired) < 2:
-            return Paragraph(f"<i>{title}: insufficient data points ({len(paired)})</i>", ParagraphStyle("empty", fontSize=9, textColor=colors.grey))
         if len(paired) > 1200:
             step = max(1, len(paired) // 1200)
             paired = paired[::step]
@@ -734,146 +688,41 @@ def add_table(story, rows, widths=None, font_size=7):
     story.append(table)
 
 
-def _mem_mb() -> str:
-    """Return current RSS in MB (Linux/macOS)."""
-    try:
-        import resource
-        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        # macOS reports bytes, Linux reports KB
-        import platform
-        if platform.system() == "Darwin":
-            return f"{rss / 1024 / 1024:.0f}MB"
-        return f"{rss / 1024:.0f}MB"
-    except Exception:
-        return "?"
-
-
 def build_report() -> None:
     ensure_dirs()
-    print(f"[MEM] Start: {_mem_mb()}", flush=True)
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=8, leading=10))
     styles.add(ParagraphStyle(name="Caption", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#5f6872")))
     chart = Chart()
 
-    # ── Phase 1+2: TCGA data — process ONE project at a time to limit memory ──
-    # Each project's DataFrame is created, used for KM + alteration analysis,
-    # then immediately released.  This keeps peak memory at ~1 DataFrame instead of 33.
+    tcga_frames: dict[str, pd.DataFrame] = {}
     km_results: dict[str, KMResult] = {}
-    tcga_medians: list[tuple[str, float]] = []
-    tcga_counts: list[tuple[str, float]] = []
-    alteration_rows: list[dict] = []
     failed = []
-    try:
-        entrez_id = gene_entrez_id()
-    except Exception:
-        entrez_id = None
     for project in TCGA_PROJECTS:
-        print(f"TCGA {project} [{_mem_mb()}]", flush=True)
+        print(f"TCGA {project}")
         try:
             df, result = analyze_tcga_project(project)
             if result.n >= 20:
+                tcga_frames[project] = df
                 km_results[project] = result
-                tcga_medians.append((project, float(df["expr"].median())))
-                tcga_counts.append((project, float(len(df))))
-                # Compute alteration analysis for THIS project while df is in memory
-                if entrez_id is not None:
-                    try:
-                        study = tcga_study_id(project)
-                        sample_list = cbio_sample_list_id(study)
-                        if sample_list:
-                            gistic = cbio_profile_id(study, "_gistic")
-                            mutations = cbio_profile_id(study, "_mutations")
-                            cna_data = cbio_molecular_data(gistic, sample_list, entrez_id) if gistic else []
-                            mut_data = cbio_mutations(mutations, sample_list, entrez_id) if mutations else []
-                            cna_by_patient = {}
-                            for item in cna_data:
-                                try:
-                                    cna_by_patient[item["patientId"]] = int(float(item["value"]))
-                                except (KeyError, ValueError):
-                                    pass
-                            mutated = {m["patientId"] for m in mut_data if m.get("patientId")}
-                            for kind, patients in [("mutation", mutated),
-                                                   ("amplification", {p for p, v in cna_by_patient.items() if v == 2}),
-                                                   ("gain_or_amplification", {p for p, v in cna_by_patient.items() if v >= 1}),
-                                                   ("deletion", {p for p, v in cna_by_patient.items() if v <= -1})]:
-                                surv = alteration_survival(df, patients, kind)
-                                alteration_rows.append({"project": project, "alteration": kind,
-                                    "altered_patients": surv["n_altered"], "unaltered_patients": surv["n_unaltered"],
-                                    "altered_events": surv["altered_events"], "unaltered_events": surv["unaltered_events"],
-                                    "logrank_p": surv["p_value"], "direction": surv["direction"],
-                                    "altered_curve": surv["altered_curve"], "unaltered_curve": surv["unaltered_curve"]})
-                    except Exception as exc:
-                        print(f"  cBioPortal {project}: {exc}")
-            del df  # Release THIS project's DataFrame immediately
         except Exception as exc:
-            print(f"  FAILED {project}: {type(exc).__name__}: {exc}", flush=True)
             failed.append((project, str(exc)))
-        gc.collect()
 
-    tcga_medians = sorted(tcga_medians, key=lambda x: x[1], reverse=True)
-    tcga_counts = sorted(tcga_counts, key=lambda x: x[1], reverse=True)
-    alteration_df = pd.DataFrame(alteration_rows) if alteration_rows else pd.DataFrame()
-    del alteration_rows
-    gc.collect()
-
-    # ── Phase 3: DepMap (gene-specific streaming, low memory) ──
-    print(f"[MEM] After TCGA: {_mem_mb()}", flush=True)
-    try:
-        print("DepMap metadata")
-        meta = depmap_model_metadata()
-        print("DepMap expression")
-        dep_expr = depmap_gene_column("OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv").rename(columns={GENE_SYMBOL: "expr"})
-        print("DepMap copy number")
-        dep_cn = depmap_gene_column("PortalOmicsCNGeneLog2.csv").rename(columns={GENE_SYMBOL: "cn_log2"})
-        print("DepMap mutations")
-        dep_mut = depmap_gene_mutations()
-        dep = meta.merge(dep_expr, on="ModelID", how="left").merge(dep_cn, on="ModelID", how="left")
-        dep["Lineage"] = dep["Lineage"].fillna("Unknown")
-        dep_mut_annot = dep_mut.merge(meta[["ModelID", "CellLineName", "Lineage"]], on="ModelID", how="left") if len(dep_mut) else dep_mut
-        del dep_expr, dep_cn, meta
-        gc.collect()
-    except Exception as exc:
-        print(f"[WARNING] DepMap data fetch failed: {exc}")
-        dep = pd.DataFrame(columns=["ModelID", "Lineage", "expr", "cn_log2"])
-        dep_mut = pd.DataFrame()
-        dep_mut_annot = pd.DataFrame()
-
-    # ── Phase 4: CPTAC protein ──
-    try:
-        print("CPTAC protein")
-        protein_df = cptac_protein_data(gene_entrez_id())
-    except Exception as exc:
-        print(f"[WARNING] CPTAC data fetch failed: {exc}")
-        protein_df = pd.DataFrame()
-
-    # ── Pre-compute summary stats for [RESULTS] output (before data is released) ──
-    _summary = {
-        "n_km": len(km_results),
-        "n_tcga": len(TCGA_PROJECTS),
-        "n_failed": len(failed),
-    }
-    if km_results:
-        sorted_km = sorted(km_results.values(), key=lambda r: r.p_value)
-        _summary["km_sig"] = sum(1 for r in sorted_km if r.p_value < 0.05)
-        _summary["km_top3"] = "; ".join(f"{r.cancer} p={r.p_value:.2e} {r.direction}" for r in sorted_km[:3])
-    if len(alteration_df):
-        alt_valid = alteration_df[alteration_df["logrank_p"].notna()]
-        alt_sig = alt_valid[alt_valid["logrank_p"] < 0.05]
-        _summary["alt_sig"] = len(alt_sig)
-        _summary["alt_total"] = len(alt_valid)
-        if len(alt_sig):
-            top3_alt = alt_valid.nsmallest(3, "logrank_p")
-            _summary["alt_top3"] = "; ".join(f"{r['project']}:{r['alteration']} p={r['logrank_p']:.2e}" for _, r in top3_alt.iterrows())
-    _summary["dep_expr_n"] = int(dep["expr"].notna().sum())
-    _summary["dep_mut_n"] = int(dep_mut["ModelID"].nunique()) if len(dep_mut) else 0
-    _summary["dep_mut_total"] = len(dep_mut)
-    if dep["expr"].notna().any():
-        top_lin = dep.groupby("Lineage")["expr"].median().nlargest(3)
-        _summary["dep_top_lin"] = ", ".join(f"{lin} ({med:.1f})" for lin, med in top_lin.items())
-    if len(protein_df):
-        _summary["cptac_studies"] = int(protein_df["study"].nunique())
-        _summary["cptac_samples"] = int(protein_df["protein"].notna().sum())
+    print("DepMap metadata")
+    meta = depmap_model_metadata()
+    print("DepMap expression")
+    dep_expr = depmap_gene_column("OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv").rename(columns={GENE_SYMBOL: "expr"})
+    print("DepMap copy number")
+    dep_cn = depmap_gene_column("PortalOmicsCNGeneLog2.csv").rename(columns={GENE_SYMBOL: "cn_log2"})
+    print("DepMap mutations")
+    dep_mut = depmap_gene_mutations()
+    dep = meta.merge(dep_expr, on="ModelID", how="left").merge(dep_cn, on="ModelID", how="left")
+    dep["Lineage"] = dep["Lineage"].fillna("Unknown")
+    dep_mut_annot = dep_mut.merge(meta, on="ModelID", how="left") if len(dep_mut) else dep_mut
+    print("TCGA cBioPortal mutation/CNA")
+    alteration_df = analyze_tcga_alterations(tcga_frames)
+    print("CPTAC protein")
+    protein_df = cptac_protein_data(gene_entrez_id())
 
     appendix = []
     for project, r in km_results.items():
@@ -926,21 +775,23 @@ def build_report() -> None:
     story.append(Spacer(1, 8))
     rows = [["Claim", "Figure/data support"]]
     rows += [
-        ["Broad patient expression", f"{GENE_SYMBOL} expression row analyzed in {_summary['n_km']} TCGA projects."],
-        ["Context-dependent survival", f"{_summary.get('km_sig', 0)} TCGA projects reached nominal median-split log-rank p<0.05; directions vary."],
-        ["Broad cell-line expression", f"DepMap expression analyzed for {_summary['dep_expr_n']} models with lineage metadata."],
+        ["Broad patient expression", f"{GENE_SYMBOL} expression row analyzed in {len(tcga_frames)} TCGA projects."],
+        ["Context-dependent survival", f"{sum(1 for r in km_results.values() if r.p_value < 0.05)} TCGA projects reached nominal median-split log-rank p<0.05; directions vary."],
+        ["Broad cell-line expression", f"DepMap expression analyzed for {dep['expr'].notna().sum()} models with lineage metadata."],
         ["Copy-number not a clean driver", "DepMap copy-number distribution and expression-copy relationship are shown; interpretation remains exploratory."],
-        ["Mutation burden", f"DepMap {GENE_SYMBOL} mutation table contains {_summary['dep_mut_total']} mutation records across {_summary['dep_mut_n']} unique models."],
-        ["TCGA alteration survival", f"cBioPortal mutation/GISTIC copy-number statuses tested across {_summary.get('alt_total', 0)} TCGA PanCancer Atlas tests."],
-        ["CPTAC protein", f"CPTAC/cBioPortal protein abundance retrieved for {_summary.get('cptac_studies', 0)} studies and {_summary.get('cptac_samples', 0)} samples."],
+        ["Mutation burden", f"DepMap {GENE_SYMBOL} mutation table contains {len(dep_mut)} mutation records across {dep_mut['ModelID'].nunique() if len(dep_mut) else 0} unique models."],
+        ["TCGA alteration survival", f"cBioPortal mutation/GISTIC copy-number statuses tested across {alteration_df['project'].nunique() if len(alteration_df) else 0} TCGA PanCancer Atlas projects."],
+        ["CPTAC protein", f"CPTAC/cBioPortal protein abundance retrieved for {protein_df['study'].nunique() if len(protein_df) else 0} studies and {len(protein_df)} samples."],
     ]
     add_table(story, rows, widths=[2.0 * inch, 5.0 * inch])
 
     story.append(PageBreak())
     story.append(Paragraph(f"TCGA Pan-Cancer {GENE_SYMBOL} Expression", styles["Heading1"]))
-    story.append(chart.hbar(f"Median {GENE_SYMBOL} expression by TCGA project", tcga_medians, f"Median {GENE_SYMBOL} expression", max_items=33))
+    med_items = sorted([(p, float(df["expr"].median())) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
+    story.append(chart.hbar(f"Median {GENE_SYMBOL} expression by TCGA project", med_items, f"Median {GENE_SYMBOL} expression", max_items=33))
     story.append(Spacer(1, 10))
-    story.append(chart.hbar("TCGA matched expression-survival sample count by project", tcga_counts, "Matched patients", color="#8aa66a", max_items=33))
+    n_items = sorted([(p, float(len(df))) for p, df in tcga_frames.items()], key=lambda x: x[1], reverse=True)
+    story.append(chart.hbar("TCGA matched expression-survival sample count by project", n_items, "Matched patients", color="#8aa66a", max_items=33))
 
     story.append(PageBreak())
     story.append(Paragraph("TCGA Pan-Cancer Survival Screen", styles["Heading1"]))
@@ -1016,10 +867,6 @@ def build_report() -> None:
     else:
         story.append(Paragraph("No TCGA mutation/CNA alteration data were retrieved from cBioPortal for this gene.", styles["BodyText"]))
 
-    # Release alteration data and KM results — already rendered
-    del km_results, tcga_medians, tcga_counts, alteration_df
-    gc.collect()
-
     story.append(PageBreak())
     story.append(Paragraph(f"DepMap {GENE_SYMBOL} Expression Across Cancer Lineages", styles["Heading1"]))
     lineage_counts = dep.groupby("Lineage")["expr"].count().sort_values(ascending=False)
@@ -1084,10 +931,6 @@ def build_report() -> None:
     else:
         story.append(Paragraph(f"No {GENE_SYMBOL} mutation records were found in the parsed DepMap 26Q1 somatic mutation table.", styles["BodyText"]))
 
-    # Release DepMap data — already rendered
-    del dep, dep_mut_annot
-    gc.collect()
-
     story.append(PageBreak())
     story.append(Paragraph(f"CPTAC {GENE_SYMBOL} Protein Expression", styles["Heading1"]))
     if len(protein_df):
@@ -1112,10 +955,6 @@ def build_report() -> None:
     else:
         story.append(Paragraph(f"No CPTAC protein_quantification records were retrieved for {GENE_SYMBOL} from the configured public CPTAC cBioPortal studies.", styles["BodyText"]))
 
-    # Release remaining data — all sections rendered
-    del protein_df, dep_mut
-    gc.collect()
-
     story.append(PageBreak())
     story.append(Paragraph("Interpretation", styles["Heading1"]))
     for bullet in [
@@ -1132,60 +971,51 @@ def build_report() -> None:
     story.append(Spacer(1, 10))
     story.append(Paragraph(f"Primary data sources: TCGA/GDC Hub via UCSC Xena; DepMap portal download API, DepMap Public 26Q1 released 2026-04-01; Human Protein Atlas {GENE_SYMBOL} entry and gene-specific literature for interpretation.", styles["Small"]))
 
-    try:
-        doc.build(story)
-        # Validate PDF on disk
-        pdf_bytes = PDF_OUT.stat().st_size
-        with open(PDF_OUT, "rb") as _f:
-            _header = _f.read(8)
-            _f.seek(max(0, pdf_bytes - 64))
-            _trailer = _f.read()
-        if not _header.startswith(b"%PDF"):
-            print(f"[WARNING] PDF header invalid: {_header!r}", flush=True)
-        elif b"%%EOF" not in _trailer:
-            print(f"[WARNING] PDF missing %%EOF trailer — file may be truncated ({pdf_bytes} bytes)", flush=True)
-        else:
-            print(f"[PDF] Valid PDF written: {pdf_bytes} bytes, header OK, %%EOF present", flush=True)
-    except Exception as exc:
-        print(f"[WARNING] PDF generation failed: {exc}", flush=True)
-        # Try to produce a minimal PDF with just text summary
-        try:
-            from reportlab.platypus import SimpleDocTemplate as _Doc
-            fallback_doc = _Doc(str(PDF_OUT), pagesize=letter)
-            fallback_story = [
-                Paragraph(f"{GENE_SYMBOL} Pan-Cancer Report (partial)", styles["Title"]),
-                Spacer(1, 12),
-                Paragraph(f"Full report generation encountered an error: {exc}", styles["BodyText"]),
-                Spacer(1, 8),
-                Paragraph("The appendix CSV contains all numeric results. Re-run with a different gene if the issue persists.", styles["BodyText"]),
-            ]
-            fallback_doc.build(fallback_story)
-        except Exception:
-            pass  # PDF will be missing, but [RESULTS] + [DONE] still printed below
+    doc.build(story)
 
     # ── Print key results to stdout for agent consumption ──
-    # Uses pre-computed _summary dict (data has been released for memory)
+    # Keep this compact: the agent copies these lines into its summary.
+    # Detailed per-project data is in the PDF and appendix CSV.
     lines = []
     lines.append(f"[RESULTS] === Pan-cancer report: {GENE_SYMBOL} ({GENE_ENSEMBL}) ===")
-    lines.append(f"[RESULTS] TCGA projects analyzed: {_summary['n_km']} / {_summary['n_tcga']}")
+    lines.append(f"[RESULTS] TCGA projects analyzed: {len(km_results)} / {len(TCGA_PROJECTS)}")
 
-    if "km_sig" in _summary:
-        lines.append(f"[RESULTS] Expression-survival: {_summary['km_sig']} projects with p<0.05 | Top hits: {_summary['km_top3']}")
+    # Expression-survival
+    if km_results:
+        sorted_km = sorted(km_results.values(), key=lambda r: r.p_value)
+        sig_count = sum(1 for r in sorted_km if r.p_value < 0.05)
+        top3 = sorted_km[:3]
+        top3_str = "; ".join(f"{r.cancer} p={r.p_value:.2e} {r.direction}" for r in top3)
+        lines.append(f"[RESULTS] Expression-survival: {sig_count} projects with p<0.05 | Top hits: {top3_str}")
 
-    if "alt_sig" in _summary:
-        lines.append(f"[RESULTS] Alteration-survival: {_summary['alt_sig']} significant out of {_summary['alt_total']} tests (mutation/CNA from cBioPortal)")
-        if _summary.get("alt_top3"):
-            lines.append(f"[RESULTS]   Top alteration hits: {_summary['alt_top3']}")
+    # Alteration-survival
+    if len(alteration_df):
+        alt_valid = alteration_df[alteration_df["logrank_p"].notna()]
+        alt_sig = alt_valid[alt_valid["logrank_p"] < 0.05]
+        lines.append(f"[RESULTS] Alteration-survival: {len(alt_sig)} significant out of {len(alt_valid)} tests (mutation/CNA from cBioPortal)")
+        if len(alt_sig):
+            top3_alt = alt_valid.nsmallest(3, "logrank_p")
+            top3_alt_str = "; ".join(f"{r['project']}:{r['alteration']} p={r['logrank_p']:.2e}" for _, r in top3_alt.iterrows())
+            lines.append(f"[RESULTS]   Top alteration hits: {top3_alt_str}")
     else:
         lines.append(f"[RESULTS] Alteration-survival: no cBioPortal data retrieved")
 
-    if _summary.get("dep_expr_n"):
-        lines.append(f"[RESULTS] DepMap: {_summary['dep_expr_n']} models with expression | {_summary['dep_mut_total']} mutations in {_summary['dep_mut_n']} models | Top lineages: {_summary.get('dep_top_lin', 'N/A')}")
+    # DepMap
+    dep_expr_n = dep["expr"].notna().sum()
+    dep_mut_n = dep_mut["ModelID"].nunique() if len(dep_mut) else 0
+    dep_mut_total = len(dep_mut)
+    if dep_expr_n:
+        top_lin = dep.groupby("Lineage")["expr"].median().nlargest(3)
+        top_lin_str = ", ".join(f"{lin} ({med:.1f})" for lin, med in top_lin.items())
+        lines.append(f"[RESULTS] DepMap: {dep_expr_n} models with expression | {dep_mut_total} mutations in {dep_mut_n} models | Top lineages: {top_lin_str}")
     else:
         lines.append(f"[RESULTS] DepMap: no expression data found")
 
-    if "cptac_studies" in _summary:
-        lines.append(f"[RESULTS] CPTAC protein: {_summary['cptac_samples']} samples across {_summary['cptac_studies']} studies")
+    # CPTAC
+    if len(protein_df):
+        n_studies = protein_df["study"].nunique()
+        n_samples = protein_df["protein"].notna().sum()
+        lines.append(f"[RESULTS] CPTAC protein: {n_samples} samples across {n_studies} studies")
     else:
         lines.append(f"[RESULTS] CPTAC protein: no data retrieved")
 
