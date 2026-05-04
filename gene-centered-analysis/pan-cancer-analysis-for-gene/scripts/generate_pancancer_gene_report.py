@@ -46,10 +46,33 @@ CPTAC_STUDIES = [
 ]
 
 
-def configure(gene: str, ensembl: str, outdir: str | None = None) -> None:
+def resolve_ensembl_id(gene_symbol: str) -> str:
+    """Look up the Ensembl gene ID for a HGNC symbol via MyGene.info."""
+    url = f"https://mygene.info/v3/query?q=symbol:{gene_symbol}&species=human&fields=ensembl.gene"
+    req = Request(url, headers={"User-Agent": "bioinfor-claw/1.0"})
+    with urlopen(req, timeout=30) as resp:
+        data = json.load(resp)
+    hits = data.get("hits", [])
+    if not hits:
+        raise RuntimeError(f"Could not resolve Ensembl ID for gene symbol: {gene_symbol}")
+    ensembl = hits[0].get("ensembl")
+    if isinstance(ensembl, list):
+        ensembl = ensembl[0]
+    eid = ensembl.get("gene") if isinstance(ensembl, dict) else None
+    if not eid:
+        raise RuntimeError(f"No Ensembl gene ID found for {gene_symbol}")
+    print(f"[INFO] Resolved {gene_symbol} → {eid} via MyGene.info", flush=True)
+    return eid
+
+
+def configure(gene: str, ensembl: str | None = None, outdir: str | None = None) -> None:
     global GENE_SYMBOL, GENE_ENSEMBL, DATA_DIR, PDF_OUT, APPENDIX_OUT, OUT_DIR
     GENE_SYMBOL = gene.upper()
-    GENE_ENSEMBL = ensembl
+    # Auto-resolve Ensembl ID if not provided or if it doesn't match the gene
+    if ensembl and ensembl.startswith("ENSG"):
+        GENE_ENSEMBL = ensembl
+    else:
+        GENE_ENSEMBL = resolve_ensembl_id(GENE_SYMBOL)
     if outdir:
         OUT_DIR = Path(outdir)
     stem = GENE_SYMBOL.lower()
@@ -1042,7 +1065,7 @@ def build_report() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a pan-cancer TCGA/DepMap report for one gene.")
     parser.add_argument("--gene", default="PRNP", help="HGNC gene symbol, e.g. PRNP or NADK")
-    parser.add_argument("--ensembl", default="ENSG00000171867", help="Human Ensembl gene ID without version")
+    parser.add_argument("--ensembl", default=None, help="Human Ensembl gene ID (auto-resolved from gene symbol if omitted)")
     parser.add_argument("--outdir", default=None, help="Output directory (default: current directory)")
     parser.add_argument("--keep-data", action="store_true", default=False,
                         help="Keep downloaded intermediate data files (default: delete after report is built)")
