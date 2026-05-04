@@ -2011,7 +2011,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         run_start = _time.time()
-        timeout = int(args.get('timeout') or 300)
+        # Heavy scripts that download lots of data need much longer timeouts
+        _HEAVY_SCRIPTS = {'generate_pancancer_gene_report.py'}
+        default_timeout = 1800 if script_path.name in _HEAVY_SCRIPTS else 300
+        timeout = int(args.get('timeout') or default_timeout)
 
         print(f"  [tool/run_script] {skill_id} :: {' '.join(cmd[1:])}")
 
